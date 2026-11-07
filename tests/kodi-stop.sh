@@ -9,4 +9,4 @@ for i in $(seq 1 10); do ls -l /proc/$pid/fd 2>/dev/null | grep -q /dev/video0 |
 ls -l /proc/$pid/fd 2>/dev/null | grep -q /dev/video0 && echo "AVÍS: /dev/video0 encara obert"
 rpc '{"jsonrpc":"2.0","id":2,"method":"Application.Quit"}'
 for i in $(seq 1 10); do pgrep kodi.bin >/dev/null || exit 0; sleep 1; done
-echo "Kodi penjat en sortir (The Crew?): kill -9"; pkill -9 kodi.bin
+echo "Kodi penjat en sortir (algun servei de complement?): kill -9"; pkill -9 kodi.bin

@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kodi-iris contributors <kodi-iris@invalid>
+Date: Sat, 7 Nov 2026 13:44:56 +0000
+Subject: [PATCH 5/5] v4l2_m2m_dec: flush by reopening the decoder after a
+ drain on iris
+
+iris keeps its drain sub-state across STREAMOFF, and once a STOP has been
+issued the session never decodes again however it is restarted (START
+before streamoff, capture-after-output ordering, or both).  Kodi drains
+before every seek, so playback stalled for good and the stalled session
+could wedge the driver for all clients.  A fresh session always works:
+with FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN, flush closes and re-inits the
+decoder when a drain was started.  Seeks now resume in ~55 ms (1080p) /
+~130 ms (2160p).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libavcodec/v4l2_m2m.h     |  1 +
+ libavcodec/v4l2_m2m_dec.c | 18 +++++++++++++++++-
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/libavcodec/v4l2_m2m.h b/libavcodec/v4l2_m2m.h
+index c9279e39e4..ac56a52965 100644
+--- a/libavcodec/v4l2_m2m.h
++++ b/libavcodec/v4l2_m2m.h
+@@ -125,6 +125,7 @@ typedef struct V4L2m2mContext {
+ #define FF_V4L2_QUIRK_ENUM_FRAMESIZES_BROKEN    2
+ #define FF_V4L2_QUIRK_8192_MACRO_MAX            4   // Size limited to 8192 macroblocks
+ #define FF_V4L2_QUIRK_8BIT_ONLY                 8   // Only 8-bit content decodes (iris: >8-bit fails at capture REQBUFS)
++#define FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN       16   // Session can't be restarted after a drain: flush by reopening (iris)
+     /* Quirks */
+     unsigned int quirks;
+ 
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index 82e78f4ae8..fe58cecaa2 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -1041,8 +1041,9 @@ get_quirks(AVCodecContext * const avctx, V4L2m2mContext * const s)
+     // Qualcomm iris (as of this kernel) offers no >8-bit capture format: a
+     // 10-bit stream gets NV12 at source change and then REQBUFS fails, i.e.
+     // only after decode has started. Refuse such streams at open instead.
++    // Nor can a session be restarted once drained (see v4l2_decode_flush).
+     if (strcmp(cap.driver, "iris_driver") == 0)
+-        s->quirks |= FF_V4L2_QUIRK_8BIT_ONLY;
++        s->quirks |= FF_V4L2_QUIRK_8BIT_ONLY | FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN;
+ 
+     av_log(avctx, AV_LOG_DEBUG, "Driver '%s': Quirks=%#x\n", cap.driver, s->quirks);
+     return 0;
+@@ -1422,6 +1423,21 @@ static void v4l2_decode_flush(AVCodecContext *avctx)
+ 
+     av_log(avctx, AV_LOG_TRACE, "<<< %s: streamon=%d\n", __func__, output->streamon);
+ 
++    // iris keeps its drain state across STREAMOFF and, once a drain (STOP)
++    // has been issued, the same session never decodes again however it is
++    // restarted (seen as a permanent stall after Kodi seeks, which always
++    // drain first).  A fresh session always works, so reopen.  Frames still
++    // held by the caller keep the old context alive until released.
++    if ((s->quirks & FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN) != 0 &&
++        (s->draining || ff_v4l2_ctx_eos(capture))) {
++        int ret;
++        av_log(avctx, AV_LOG_DEBUG, "Flush after drain: reopening decoder\n");
++        v4l2_decode_close(avctx);
++        if ((ret = v4l2_decode_init(avctx)) < 0)
++            av_log(avctx, AV_LOG_ERROR, "Flush: decoder reopen failed: %s\n", av_err2str(ret));
++        return;
++    }
++
+     // Reflushing everything is benign, quick and avoids having to worry about
+     // states like EOS processing so don't try to optimize out (having got it
+     // wrong once)

@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kodi-iris contributors <kodi-iris@invalid>
+Date: Sat, 7 Nov 2026 11:30:48 +0000
+Subject: [PATCH 1/5] v4l2_m2m: discard empty error capture buffers instead of
+ outputting them
+
+Symptom: every VP9 bitexact case failed with "capture: driver decode
+error" and 102 (nv12) / 105-109 (drm) frames for 100 in the stream,
+first difference at frame 11.
+
+iris_driver returns the capture buffer used for a hidden VP9 frame
+(show_frame=0, the alt-ref in a superframe) with V4L2_BUF_FLAG_ERROR,
+bytesused 0 and timestamp 0. get_qbuf() only treats an empty buffer as
+EOS when it is not flagged as an error, so these were converted into
+frames with stale buffer contents, no pts and decode_error_flags set.
+Measured on vp9_640x360: 108 frames out, the 8 error ones all empty and
+untimed; the remaining 100 are bit-exact against libavcodec vp9.
+
+An empty buffer holds no picture whatever the driver, so requeue it and
+dequeue the next one; error buffers with a payload are still returned
+(flagged corrupt) as before. ff_v4l2_context_dequeue_frame() becomes a
+for loop so the skip does not run xlat_pts_frame_out() on a stale frame.
+
+Verified: tests/run-matrix.sh all 27 cases PASS (VP9 nv12+drm 4/4 each,
+no regressions in H.264/HEVC).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libavcodec/v4l2_context.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/libavcodec/v4l2_context.c b/libavcodec/v4l2_context.c
+index cf4b90155e..8be37aafed 100644
+--- a/libavcodec/v4l2_context.c
++++ b/libavcodec/v4l2_context.c
+@@ -1054,14 +1054,30 @@ int ff_v4l2_context_dequeue_frame(V4L2Context* ctx, AVFrame* frame, int timeout)
+     V4L2Buffer *avbuf;
+     int rv;
+ 
+-    do {
++    for (;;) {
+         if ((rv = get_qbuf(ctx, &avbuf, timeout)) != 0)
+             return rv;
++        // A capture buffer flagged as an error with no payload holds no
++        // picture: get_qbuf() only treats an empty buffer as EOS when it is
++        // *not* an error, so these must be dropped here or stale buffer
++        // contents get output as a (corrupt, untimed) frame. iris returns the
++        // buffers of hidden VP9 frames (show_frame=0, e.g. the alt-ref in a
++        // superframe) this way. Requeue it and look for the next one.
++        if ((avbuf->buf.flags & V4L2_BUF_FLAG_ERROR) != 0 &&
++            (V4L2_TYPE_IS_MULTIPLANAR(ctx->type) ?
++                avbuf->buf.m.planes[0].bytesused : avbuf->buf.bytesused) == 0) {
++            av_log(avctx, AV_LOG_DEBUG, "%s: discard empty error buffer: index %d, ts=%" PRId64 ".%06ld\n",
++                   ctx->name, avbuf->buf.index,
++                   (int64_t)avbuf->buf.timestamp.tv_sec, (long)avbuf->buf.timestamp.tv_usec);
++            if ((rv = ff_v4l2_buffer_enqueue(avbuf)) != 0)
++                return rv;
++            continue;
++        }
+         if ((rv = ff_v4l2_buffer_buf_to_avframe(frame, avbuf)) != 0)
+             return rv;
+-    } while (xlat_pts_frame_out(avctx, &s->xlat, frame) != 0);
+-
+-   return 0;
++        if (xlat_pts_frame_out(avctx, &s->xlat, frame) == 0)
++            return 0;
++    }
+ }
+ 
+ int ff_v4l2_context_dequeue_packet(V4L2Context* ctx, AVPacket* pkt, int timeout)
