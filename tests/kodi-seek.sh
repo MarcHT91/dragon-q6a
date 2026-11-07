@@ -12,13 +12,16 @@ for i in $(seq 1 "$N"); do
   if [ $((i % 2)) = 1 ]; then s=120; else s=-60; fi
   rpc '{"jsonrpc":"2.0","id":1,"method":"Player.Seek","params":{"playerid":'$pid',"value":{"seconds":'$s'}}}' >/dev/null
   t0=$(date +%s%N); a=$(ms); ok=0
+  prev=""
+  # Represa = el temps ja no és el d'abans del salt (|b-a| > 20 s) i avança entre dues lectures.
   while [ $(( ($(date +%s%N) - t0) / 1000000 )) -lt 10000 ]; do
-    sleep 0.2; b=$(ms)
-    if [ "$b" -gt "$((a + 300))" ]; then ok=1; break; fi
+    sleep 0.2; b=$(ms); d=$(( b - a )); d=${d#-}
+    if [ "$d" -gt 20000 ] && [ -n "$prev" ] && [ "$b" -gt "$((prev + 100))" ]; then ok=1; break; fi
+    [ "$d" -gt 20000 ] && prev=$b
   done
   dt=$(( ($(date +%s%N) - t0) / 1000000 ))
   if [ $ok = 1 ] && [ $dt -le 3000 ]; then r=OK; else r=FAIL; rc=1; fi
-  printf '%-4s salt %2d (%+4ds) -> %ds, reprèn en %d ms\n' $r $i $s $((a / 1000)) $dt
+  printf '%-4s salt %2d (%+4ds) %ds -> %ds, reprèn en %d ms\n' $r $i $s $((a / 1000)) $((b / 1000)) $dt
 done
 echo "INFO errors DRMPRIME nous: $(tail -n +$L0 "$LOG" | grep -cE 'DRMPRIME.*(failed|error)')"
 tail -n +$L0 "$LOG" | grep -E 'DRMPRIME.*(failed|error)' | cut -c30- | sed 's/(-\?[0-9]*)//' | sort | uniq -c
