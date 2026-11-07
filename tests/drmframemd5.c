@@ -121,8 +121,10 @@ int main(int argc, char **argv)
     avcodec_parameters_to_context(c, fc->streams[si]->codecpar);
     c->pkt_timebase = fc->streams[si]->time_base;
     c->get_format = get_format;
-    if (avcodec_open2(c, codec, NULL) < 0)
+    if ((ret = avcodec_open2(c, codec, NULL)) < 0) {
+        fprintf(stderr, "drmframemd5: avcodec_open2: %s\n", av_err2str(ret));
         return 1;
+    }
 
     pkt = av_packet_alloc();
     f = av_frame_alloc();

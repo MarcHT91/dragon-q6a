@@ -10,9 +10,15 @@ for mode in nv12 drm; do
   done
   "$T/bitexact.sh" "$M/h264_reschange.mkv" h264 h264_v4l2m2m $mode || rc=1
 done
-# 10 bits: el descodificador ha de fallar ràpid i net (no penjar-se).
-s=$(date +%s)
-timeout 30 ${PREFIX:-/opt/ffmpeg-iris}/bin/ffmpeg -v error -c:v hevc_v4l2m2m -i "$M/hevc10_1920x1080.mkv" -f null - >/dev/null 2>&1
-st=$?; d=$(( $(date +%s) - s ))
-if [ $st -eq 124 ]; then echo "FAIL hevc10: penjat (timeout)"; rc=1; else echo "PASS hevc10: acaba en ${d}s (codi $st)"; fi
+# 10 bits: iris no en té format de captura; el descodificador ha de refusar
+# el flux a l'obertura (avcodec_open2) perquè Kodi torni a programari:
+# codi no nul, "Error while opening decoder" i menys de 2 s.
+s=$(date +%s%N)
+out=$(timeout 30 ${PREFIX:-/opt/ffmpeg-iris}/bin/ffmpeg -hide_banner -v error -c:v hevc_v4l2m2m -i "$M/hevc10_1920x1080.mkv" -f null - 2>&1 >/dev/null)
+st=$?; ms=$(( ($(date +%s%N) - s) / 1000000 ))
+if [ $st -eq 124 ]; then echo "FAIL hevc10: penjat (timeout)"; rc=1
+elif [ $st -eq 0 ]; then echo "FAIL hevc10: no ha fallat (codi 0)"; rc=1
+elif ! grep -q "Error while opening decoder" <<<"$out"; then echo "FAIL hevc10: no falla a l'obertura (codi $st, ${ms} ms): $(head -1 <<<"$out")"; rc=1
+elif [ $ms -ge 2000 ]; then echo "FAIL hevc10: refusat a l'obertura però lent (${ms} ms)"; rc=1
+else echo "PASS hevc10: refusat a l'obertura en ${ms} ms (codi $st)"; fi
 exit $rc
