@@ -1,0 +1,3 @@
+#!/bin/sh
+# Obre Kodi amb l'FFmpeg de /opt/ffmpeg-iris (descodificació iris via DRM PRIME).
+LD_LIBRARY_PATH=/opt/ffmpeg-iris/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} exec kodi "$@"
