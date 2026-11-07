@@ -44,4 +44,5 @@ int main(int c,char**v){
       { AVDRMFrameDescriptor X=*D; X.layers[0].format=DRM_FORMAT_R8; X.layers[0].nb_planes=1; printf(" R8 Y-only:"); try_import(&X,f->width,f->height,0,1);
         X.layers[0].format=DRM_FORMAT_GR88; X.layers[0].planes[0]=D->layers[0].planes[1]; printf(" GR88 UV-only:"); try_import(&X,f->width/2,f->height/2,0,1); }
       got++; av_frame_unref(f);}}av_packet_unref(p);}
+  av_frame_free(&f); av_packet_free(&p); avcodec_free_context(&cx); avformat_close_input(&fc);
   return 0;}
