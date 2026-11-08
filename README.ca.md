@@ -202,6 +202,9 @@ git -C ~/src/ffmpeg-iris rebase --onto origin/test/8.0.x/main 2a287060cc6e iris
 
 ## Llicència
 
+El codi propi del projecte (el shim, el llançador, l'script de compilació, les proves i
+les eines) té [llicència MIT](LICENSE).
+
 Els pegats de `patches/` modifiquen l'FFmpeg i estan sota la seva llicència
 (LGPL-2.1-or-later). La compilació activa `--enable-gpl`, així que les biblioteques
 resultants són GPL-2.0-or-later.

@@ -196,5 +196,8 @@ git -C ~/src/ffmpeg-iris rebase --onto origin/test/8.0.x/main 2a287060cc6e iris
 
 ## Licence
 
+This project's own code (the shim, launcher, build script, tests and tools) is under the
+[MIT licence](LICENSE).
+
 The patches in `patches/` modify FFmpeg and are under FFmpeg's licence (LGPL-2.1-or-later).
 The build enables `--enable-gpl`, so the resulting libraries are GPL-2.0-or-later.
