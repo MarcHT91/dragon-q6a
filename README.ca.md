@@ -57,11 +57,19 @@ revisió base `2a287060cc6e` i aplica `patches/*.patch` amb `git am`.
 Variables: `SRC` (per defecte `~/src/ffmpeg-iris`), `PREFIX` (`/opt/ffmpeg-iris`), `BUILD`
 (`$SRC/out/build`) i `UPSTREAM` (l'URL de rpi-ffmpeg).
 
-Després, instal·la el llançador:
+Després, compila el shim d'EGL i instal·la'l juntament amb el llançador:
 
 ```bash
+gcc -O2 -shared -fPIC -o /opt/ffmpeg-iris/lib/libegl_linear_shim.so shim/egl_linear_shim.c -ldl
 install -m 755 kodi-iris /opt/ffmpeg-iris/bin/
 ```
+
+El llançador precarrega `libegl_linear_shim.so`, activa la ruta UCM de l'àudio HDMI (es perd
+a cada reinici) i, si el Kodi té activada l'opció de *rang de color limitat*, activa el mode
+de rang limitat del shim (vegeu [Rang de color HDMI](docs/hdmi-colour-range.ca.md)).
+
+El shim afegeix el modificador explícit `DRM_FORMAT_MOD_LINEAR`, que el Kodi omet quan importa
+els fotogrames d'iris a EGL. Sense ell, Mesa rebutja tots els fotogrames (`0x3003`).
 
 ## Ús amb Kodi
 
@@ -73,12 +81,18 @@ install -m 755 kodi-iris /opt/ffmpeg-iris/bin/
    - **Permet l'acceleració per maquinari amb DRM PRIME**: activat
      (`videoplayer.useprimedecoderforhw`). Cal tenir-lo activat: si no, Kodi tria el
      descodificador per programari.
-   - **Mètode de renderitzat PRIME**: **Direct to plane** (`videoplayer.useprimerenderer`
-     = `0`). EGL no funciona (vegeu les limitacions).
+   - **Mètode de renderitzat PRIME**: **EGL** (`videoplayer.useprimerenderer` = `1`). Necessita
+     el shim instal·lat a dalt. **Direct to plane** (`0`) també funciona i fa servir una mica
+     menys la GPU, però no pot mostrar vídeo de més de 2400 px d'amplada (vegeu les
+     limitacions).
 
    Si edites `~/.kodi/userdata/guisettings.xml` a mà amb Kodi tancat, treu l'atribut
    `default="true"` de la línia. Si hi és, Kodi no fa cas del valor.
-3. Per tancar Kodi des d'un script, fes servir `tests/kodi-stop.sh`. Atura la reproducció
+3. En un televisor, activa *Paràmetres → Sistema → Pantalla → Fer servir rang de color
+   limitat (16-235)* i deixa el nivell de negre HDMI del televisor en Automàtic. El
+   convertidor HDMI de la placa no pot dir al televisor que envia rang complet: vegeu
+   [Rang de color HDMI](docs/hdmi-colour-range.ca.md).
+4. Per tancar Kodi des d'un script, fes servir `tests/kodi-stop.sh`. Atura la reproducció
    per JSON-RPC (port 8080, amb el servidor web activat), espera que s'alliberi
    `/dev/video0`, surt i només com a últim recurs fa `kill -9`.
 
@@ -116,6 +130,7 @@ descodificador HEVC per programari.
 | `tests/kodi-seek.sh [N]` | Amb Kodi reproduint: N salts per JSON-RPC, amb el temps de represa (falla si passa de 3 s). |
 | `tests/kodi-stop.sh` | Tanca Kodi sense deixar iris penjat. |
 | `tests/eglprobe.c` | Diagnòstic: mostra el descriptor DRM que dona iris i prova d'importar-lo a EGL. |
+| `tests/yuvhint.c` | Mostra l'RGB que dona Mesa a partir de NV12 amb cada indicació d'espai de color i de rang d'EGL (amb el shim: comprova el mode de rang limitat). |
 
 Els programes en C es compilen contra `/opt/ffmpeg-iris`. Per exemple:
 
@@ -150,14 +165,13 @@ resolució i refús del 10 bits en obrir).
 
 ## Limitacions conegudes
 
-- **El renderitzat EGL no funciona.** iris dona NV12 lineal (`DRM_FORMAT_MOD_LINEAR`). Mesa
-  només l'importa si el modificador lineal s'hi passa explícitament. Kodi no el passa
-  quan és lineal, i tots els fotogrames fallen amb `0x3003` (EGL_BAD_ALLOC). Cal fer
-  servir **Direct to plane**.
-- **4K en una pantalla de 1080p.** Amb Direct to plane, el controlador de pantalla rebutja
-  un pla de 3840×2160 reduït a 1080p (`DrmAtomicCommit - test commit failed: No such
-  device` a cada fotograma), i no es veu imatge. Una pantalla que treballi a 2160p no ha
-  de reduir. Encara no s'ha provat.
+- **4K amb Direct to plane.** Els plans del controlador de pantalla accepten com a màxim
+  2400 px d'amplada d'origen (`max_linewidth` a la SC7280), i els fotogrames de 3840 px fallen
+  la prova de *commit* atòmic (`DrmAtomicCommit - test commit failed`) a cada fotograma. Cal
+  fer servir el renderitzat **EGL**.
+- **Rang de color HDMI i HDR.** El convertidor DP→HDMI RA620 de la placa no indica mai al
+  televisor el rang RGB, i no reenvia les metadades HDR. Com a solució, el Kodi es configura
+  en rang limitat; l'HDR10 es converteix a SDR. Detalls: [Rang de color HDMI](docs/hdmi-colour-range.ca.md).
 - **El 10 bits** no el descodifica iris (el controlador no ofereix cap format de captura de
   més de 8 bits) i passa a programari. El 10 bits 4K per programari no és fluid.
 - **El VP9 de 10 bits** probablement dona pantalla negra. El VP9 no porta informació de bits

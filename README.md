@@ -55,11 +55,19 @@ the base commit `2a287060cc6e`, and applies `patches/*.patch` with `git am`.
 Variables: `SRC` (default `~/src/ffmpeg-iris`), `PREFIX` (`/opt/ffmpeg-iris`), `BUILD`
 (`$SRC/out/build`) and `UPSTREAM` (the rpi-ffmpeg URL).
 
-Then install the launcher:
+Then build the EGL shim and install it with the launcher:
 
 ```bash
+gcc -O2 -shared -fPIC -o /opt/ffmpeg-iris/lib/libegl_linear_shim.so shim/egl_linear_shim.c -ldl
 install -m 755 kodi-iris /opt/ffmpeg-iris/bin/
 ```
+
+The launcher preloads `libegl_linear_shim.so`, enables the HDMI audio UCM route (lost on
+every reboot), and turns on the shim's limited-range mode when Kodi's *limited colour range*
+setting is on (see [HDMI colour range](docs/hdmi-colour-range.md)).
+
+The shim adds the explicit `DRM_FORMAT_MOD_LINEAR` modifier that Kodi leaves out when it
+imports iris frames into EGL. Without it, Mesa refuses every frame (`0x3003`).
 
 ## Using it with Kodi
 
@@ -70,12 +78,16 @@ install -m 755 kodi-iris /opt/ffmpeg-iris/bin/
    - **Allow hardware acceleration with DRM PRIME**: on
      (`videoplayer.useprimedecoderforhw`). This one is required: without it Kodi picks the
      software decoder.
-   - **PRIME render method**: **Direct to plane** (`videoplayer.useprimerenderer` = `0`).
-     EGL does not work (see Limitations).
+   - **PRIME render method**: **EGL** (`videoplayer.useprimerenderer` = `1`). It needs the
+     shim installed above. **Direct to plane** (`0`) also works and uses a little less GPU,
+     but cannot show video wider than 2400 px (see Limitations).
 
    If you edit `~/.kodi/userdata/guisettings.xml` by hand while Kodi is closed, remove the
    `default="true"` attribute from the line. Otherwise Kodi ignores the value.
-3. To quit Kodi from a script, use `tests/kodi-stop.sh`. It stops playback through JSON-RPC
+3. On a TV, turn on *Settings → System → Display → Use limited colour range (16-235)* and
+   leave the TV's HDMI black level on Auto. The board's HDMI converter cannot tell the TV
+   that it sends full range: see [HDMI colour range](docs/hdmi-colour-range.md).
+4. To quit Kodi from a script, use `tests/kodi-stop.sh`. It stops playback through JSON-RPC
    (port 8080, web server enabled), waits until `/dev/video0` is released, quits, and only
    then falls back to `kill -9`.
 
@@ -112,6 +124,7 @@ Patches `0001`–`0003` and `0005` only take effect when the driver is `iris_dri
 | `tests/kodi-seek.sh [N]` | While Kodi is playing: N seeks through JSON-RPC, with resume time (fails above 3 s). |
 | `tests/kodi-stop.sh` | Quits Kodi without leaving iris stuck. |
 | `tests/eglprobe.c` | Diagnostics: prints the DRM descriptor iris returns and tries to import it into EGL. |
+| `tests/yuvhint.c` | Prints the RGB Mesa produces from NV12 under each EGL colour-space/range hint (with the shim: checks its limited-range mode). |
 
 Build the C tools against `/opt/ffmpeg-iris`, for example:
 
@@ -146,14 +159,12 @@ resolution change, 10-bit refused at open).
 
 ## Known limitations
 
-- **EGL renderer does not work.** iris returns linear NV12 (`DRM_FORMAT_MOD_LINEAR`). Mesa
-  only imports it when the linear modifier is passed explicitly. Kodi leaves the modifier
-  out when it is linear, so every frame fails with `0x3003` (EGL_BAD_ALLOC). Use
-  **Direct to plane**.
-- **4K on a 1080p display.** With Direct to plane, the display controller rejects a
-  3840×2160 plane scaled down to 1080p (`DrmAtomicCommit - test commit failed: No such
-  device` on every frame), so no picture. A display running at 2160p needs no scaling.
-  This has not been tested yet.
+- **4K with Direct to plane.** The display controller's planes accept at most 2400 px of
+  source width (`max_linewidth` on SC7280), so 3840-wide frames fail the atomic test commit
+  (`DrmAtomicCommit - test commit failed`) on every frame. Use the **EGL** renderer.
+- **HDMI colour range and HDR.** The onboard RA620 DP-to-HDMI converter never tells the TV
+  the RGB range, and does not forward HDR metadata. Kodi is set to limited range as a
+  workaround; HDR10 is tone-mapped to SDR. Details: [HDMI colour range](docs/hdmi-colour-range.md).
 - **10-bit** is not decoded by iris (the driver offers no >8-bit capture format) and falls
   back to software. 10-bit 4K in software is not smooth.
 - **10-bit VP9** probably gives a black screen. VP9 has no bit depth information at open,

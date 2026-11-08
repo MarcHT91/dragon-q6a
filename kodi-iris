@@ -1,3 +1,14 @@
 #!/bin/sh
 # Obre Kodi amb l'FFmpeg de /opt/ffmpeg-iris (descodificació iris via DRM PRIME).
-LD_LIBRARY_PATH=/opt/ffmpeg-iris/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} exec kodi "$@"
+# - Activa la ruta UCM d'HDMI (es perd en reiniciar; sense ella tvhdmi dona EINVAL).
+# - libegl_linear_shim.so: afegeix el modificador LINEAR als imports dma-buf d'EGL
+#   (Kodi l'omet i Mesa rebutja els buffers d'iris sense ell). Cal per al renderitzador EGL (4K).
+# - Si Kodi té "Rang de color limitat" activat, el vídeo DRM PRIME també ha de sortir a 16-235
+#   (el renderitzador EGL de Kodi ignora l'opció): EGL_SHIM_LIMITED_OUT=1 ho fa al shim.
+if grep -q '<setting id="videoscreen.limitedrange">true</setting>' "${HOME}/.kodi/userdata/guisettings.xml" 2>/dev/null; then
+  export EGL_SHIM_LIMITED_OUT=1
+fi
+alsaucm -c hw:0 set _verb HiFi set _enadev HDMI >/dev/null 2>&1 || true
+P=/opt/ffmpeg-iris/lib
+LD_LIBRARY_PATH=$P${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+LD_PRELOAD=$P/libegl_linear_shim.so${LD_PRELOAD:+:$LD_PRELOAD} exec kodi "$@"
