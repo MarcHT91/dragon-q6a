@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+models/
+build/
+data/
+.venv/
+*.onnx
+*.onnx.data
+*_qnn.bin
+*.npz
+*.log

@@ -1,0 +1,12 @@
+# Radxa Dragon Q6A (aarch64, Python 3.14). Versions tested together; onnxruntime and onnxruntime-qnn must match.
+onnxruntime==1.27.0
+onnxruntime-qnn==2.3.0
+onnx==1.22.0
+numpy
+tokenizers
+jinja2
+safetensors
+huggingface_hub
+transformers   # only for validate_ref.py and test_feed_lfm3.py
+# torch (CPU) is used to read the checkpoint while building graphs and for the optional fp32 reference:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
