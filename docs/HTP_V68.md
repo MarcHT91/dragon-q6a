@@ -29,6 +29,8 @@ before being used.
 | MatMul activation × activation (u16 × u16) | **the second operand is silently reduced to 8 bits** (~4.9% error) |
 | SimplifiedLayerNormalization (RMSNorm) | **not supported** |
 | LpNormalization (p=2) | supported |
+| MatMul with a very large reduction dimension (K = 65536) | **fails to finalize, or runs ~10,000× slower** (190 s instead of ~5 ms); split into smaller matmuls (e.g. K = 1024) and add |
+| int4 weights with 3 dimensions (batched MatMul, per-channel axis 2) | fails to finalize |
 
 **A16×A16 MatMul fix.** Split the second operand into signed high and low bytes (zero
 point 128), do two 16×8 MatMuls and add them (`hi·256 + lo`). With zero point 0 the error
