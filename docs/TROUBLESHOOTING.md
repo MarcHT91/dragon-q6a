@@ -49,6 +49,16 @@ stays in `deactivating` or a process is stuck in state `D`, reboot.
 `dmesg` may be restricted for normal users; `sudo sysctl kernel.dmesg_restrict=0` makes it
 readable.
 
+## Never kill a process while it is running on the NPU
+
+Killing an NPU process in the middle of a graph execution (for example with `timeout`
+around a slow test) can leave its DSP buffers pinned in kernel memory. `free` then shows
+memory as used with no process owning it. Repeat it a few times and the OOM killer starts
+killing everything else; a service that restarts on failure then loops and makes it worse.
+Limit the number of calls instead of the wall time, let the process exit normally, and
+reboot if `used` memory stays high after all NPU processes are gone. If you run the model
+as a service, limit automatic restarts (systemd `StartLimitBurst`).
+
 ## Never read `/sys/kernel/debug/dma_buf/bufinfo`
 
 On kernel 7.2.9 reading it oopses in `dma_buf_debug_show` while holding the dma-buf list
