@@ -31,7 +31,11 @@ counter:
 dmesg | grep -c unmmap          # all since boot
 ```
 
-**Recover** (root):
+**Recover** (root). **First stop every process that uses the NPU** (your runtime, services,
+scripts). Restarting the CDSP under a process that still holds sessions leaves those
+sessions pointing at the old DSP instance; when that process later exits, fastrpc oopses in
+`fastrpc_req_mem_unmap_impl` and the next NPU process oopses in `dma_alloc_attrs`. After
+that only a reboot helps.
 
 ```bash
 sudo sh -c 'echo stop > /sys/class/remoteproc/remoteproc1/state; sleep 2;

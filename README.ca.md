@@ -112,7 +112,7 @@ un ~1,5% de velocitat. Detalls a [docs/QUANTIZATION.md](docs/QUANTIZATION.md).
   sovint no pot alliberar un buffer del DSP quan un procés que fa servir la NPU arrenca o
   surt (`unmmap ... ERROR` a `dmesg`). Al cap de diverses fuites, el CDSP deixa de respondre
   i totes les sessions de la NPU fallen fins que es reinicia. Mantingues el model en un sol
-  procés de llarga durada i evita molts processos curts seguits. Com recuperar-ho:
+  procés de llarga durada i evita molts processos curts seguits. Atura tots els processos de la NPU abans de reiniciar el CDSP. Com recuperar-ho:
   [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 - **No llegeixis `/sys/kernel/debug/dma_buf/bufinfo`** amb aquest kernel: provoca un error
   intern (*oops*) i deixa bloquejats els dma-buf, i totes les sessions de la NPU posteriors

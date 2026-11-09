@@ -109,7 +109,7 @@ Details in [docs/QUANTIZATION.md](docs/QUANTIZATION.md).
   unmap a DSP buffer when an NPU process starts or exits (`unmmap ... ERROR` in `dmesg`).
   After several of these the CDSP stops responding and every NPU session fails until the
   CDSP is restarted. Keep the model in one long-lived process and avoid many short NPU
-  processes in a row. Recovery steps are in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+  processes in a row. Stop all NPU processes before restarting the CDSP. Recovery steps are in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 - **Do not read `/sys/kernel/debug/dma_buf/bufinfo`** on this kernel: it oopses and leaves
   the dma-buf lock held, so every later NPU session hangs until a reboot.
 
