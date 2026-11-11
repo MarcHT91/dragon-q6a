@@ -1,0 +1,12 @@
+[Unit]
+Description=Dragon Q6A: enable headphone and HDMI DSP routes
+After=sound.target alsa-restore.service
+Before=shairport-sync.service kodi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/q6a-audio-route
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
