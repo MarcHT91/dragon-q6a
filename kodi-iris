@@ -1,6 +1,8 @@
 #!/bin/sh
 # Obre Kodi amb l'FFmpeg de /opt/ffmpeg-iris (descodificació iris via DRM PRIME).
-# - Activa la ruta UCM d'HDMI (es perd en reiniciar; sense ella tvhdmi dona EINVAL).
+# - Activa les rutes del DSP MultiMedia2 -> HDMI (sense ella tvhdmi dona EINVAL) i
+#   MultiMedia1 -> auriculars. No fa servir alsaucm: la seqüència UCM d'HDMI de la placa
+#   desconnecta els auriculars (vegeu github.com/MarcHT91/dragon-q6a-audio).
 # - libegl_linear_shim.so: afegeix el modificador LINEAR als imports dma-buf d'EGL
 #   (Kodi l'omet i Mesa rebutja els buffers d'iris sense ell). Cal per al renderitzador EGL (4K).
 # - Si Kodi té "Rang de color limitat" activat, el vídeo DRM PRIME també ha de sortir a 16-235
@@ -8,7 +10,9 @@
 if grep -q '<setting id="videoscreen.limitedrange">true</setting>' "${HOME}/.kodi/userdata/guisettings.xml" 2>/dev/null; then
   export EGL_SHIM_LIMITED_OUT=1
 fi
-alsaucm -c hw:0 set _verb HiFi set _enadev HDMI >/dev/null 2>&1 || true
+for r in 'DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' 'RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1'; do
+  amixer -q -D sysdefault:QCS6490RadxaDra cset name="$r" on >/dev/null 2>&1 || true
+done
 P=/opt/ffmpeg-iris/lib
 LD_LIBRARY_PATH=$P${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
 LD_PRELOAD=$P/libegl_linear_shim.so${LD_PRELOAD:+:$LD_PRELOAD} exec kodi "$@"
