@@ -23,6 +23,11 @@ volum de maquinari.
   freqüència d'entrada entre 8 i 192 kHz.
 * **El S24_LE feia caure el DSP.** `audioreach.c` declarava el S24_LE com a mostres de 3 bytes
   (`bits_per_sample = 24`). Amb un contenidor de 32 bits funciona. → [`hifi/upstream/0001`](hifi/upstream)
+  Llavors el DSP llegeix paraules senceres de 32 bits, i per això **les dades S24_LE han de portar el
+  signe estès** al byte de dalt. Les conversions d'alsa-lib (`plughw`) ho fan bé. En canvi,
+  shairport-sync deixa el byte de dalt a zero en treure S24_LE, i se sent amb una distorsió total.
+  Per això shairport treu S16_LE. El volum s'aplica al DSP i la sortida cap al còdec continua sent
+  S24, de manera que baixar el volum no fa perdre resolució.
 * **Es perdien les rutes.** A `topology.c`, escriure 0 en qualsevol control de ruta desconnectava la
   sortida, fos quin fos el flux connectat. Per això `alsactl restore` perdia l'HDMI a cada arrencada,
   i la seqüència UCM d'HDMI de la placa desconnectava els auriculars.
@@ -30,7 +35,7 @@ volum de maquinari.
 * Un flux que comença amb la seva ruta desactivada no avança mai (`hw_ptr` es queda a 0). Així és
   com s'encallava shairport-sync, que a més ignorava el SIGTERM.
 * **AirPlay 2** des d'un iPhone (Tidal, fins i tot en hi-res) arriba com a `AAC/48000/F24/2`. Per
-  tant, S24_LE a 48 kHz ho transporta tot sense conversió de freqüència.
+  tant, a 48 kHz no cal cap conversió de freqüència.
 
 ## Instal·lació
 

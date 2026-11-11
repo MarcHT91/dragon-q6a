@@ -21,6 +21,11 @@ change S24_LE playback works on the headphone path (codec DMA RX ->
 lpass rx macro -> WCD9385), with the back end at S16_LE, S24_LE or
 S32_LE and 48/96/192 kHz.
 
+Note that the DSP then reads the whole 32-bit word as Q23, so S24_LE data
+must be sign-extended into the top byte. alsa-lib's conversions do this;
+an application that leaves the top byte at zero (seen with shairport-sync)
+plays heavily distorted.
+
 Signed-off-by: Marc Herrero <marcht@proton.me>
 ---
 --- a/sound/soc/qcom/qdsp6/audioreach.c	2026-11-11 08:34:08.238639713 +0000

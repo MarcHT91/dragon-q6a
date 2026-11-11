@@ -93,6 +93,10 @@ Results (2026-11-11, kernel 7.2.9-edge-qcs6490):
 
 ## Caveats
 
+* S24_LE samples must be sign-extended into the top byte of the 32-bit word (the DSP reads
+  Q23 in 32 bits). alsa-lib conversions are fine; shairport-sync's own S24_LE output is not
+  (zero top byte, heavy distortion). Test a source with `lab/signext.py` style tones.
+
 * After an ADSP crash the card does not come back (wcd938x probe -EBUSY): reboot.
 * An Armbian firmware update does not refresh the override in `/lib/firmware/updates`;
   re-run `install.sh` if the topology changes.

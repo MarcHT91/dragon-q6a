@@ -21,13 +21,17 @@ Audio fixes for the **Radxa Dragon Q6A** (Qualcomm QCS6490) on Armbian (edge ker
   44.1 kHz on the back end is rejected cleanly. The DSP resamples any front-end rate from 8 to 192 kHz.
 * **S24_LE crashed the ADSP.** `audioreach.c` declared S24_LE as packed 3-byte samples
   (`bits_per_sample = 24`). With a 32-bit container it works. → [`hifi/upstream/0001`](hifi/upstream)
+  The DSP then reads full 32-bit words, so **S24_LE data must be sign-extended** into the top byte.
+  alsa-lib conversions (`plughw`) do that; shairport-sync's S24_LE output leaves the top byte at
+  zero and sounds completely distorted, so shairport uses S16_LE (the volume is applied in the DSP
+  and the back end stays S24, so attenuation does not lose resolution).
 * **Routes got lost.** In `topology.c`, writing 0 to any route control disconnected the back end,
   whichever stream was connected. `alsactl restore` lost HDMI on every boot, and the board's UCM
   HDMI sequence disconnected the headphones. → [`hifi/upstream/0002`](hifi/upstream), [`route/`](route)
 * A PCM started while its route is off never runs (`hw_ptr` stays 0). shairport-sync used to stall
   this way and ignored SIGTERM.
-* **AirPlay 2** from an iPhone (Tidal, including hi-res) arrives as `AAC/48000/F24/2`, so
-  S24_LE at 48 kHz carries all of it without resampling.
+* **AirPlay 2** from an iPhone (Tidal, including hi-res) arrives as `AAC/48000/F24/2`: no
+  resampling is needed at 48 kHz.
 
 ## Install
 
