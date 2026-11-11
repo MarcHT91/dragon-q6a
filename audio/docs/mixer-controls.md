@@ -34,8 +34,9 @@ kernel bug that made writes of 0 disconnect the wrong stream.
 * `RX_COMP1/2 Switch`, `RX_Softclip Switch`: compressor/limiter, off.
 * `IIR0/1/2 Band1-5`, `INPx MUX/Volume`: 5-band biquad EQ, unused.
 * `RX HPH Mode`: amplifier class. `CLS_H_LOHIFI` (UCM default), `CLS_AB_LOHIFI`
-  (fixed rail, slightly more linear), `CLS_AB`, low-power `…_LP`, `CLS_H_ULP`.
-  Read at amplifier power-up, so change it while nothing plays.
+  (fixed rail), `CLS_AB`, low-power `…_LP`, `CLS_H_ULP`. Read at amplifier power-up,
+  so change it while nothing plays. **Use `CLS_AB_LOHIFI`**: in class H a sine above
+  about -3 dBFS clips (the rail does not follow the peaks), even with low analog gain.
 * `RX_HPH PWR Mode`: `LOHIFI` / `ULP`, must match the above.
 * `RX_HPH HD2 Mode Switch`: digital 2nd-harmonic predistortion with a fixed
   coefficient tuned for low-impedance headphones. Off; pointless into a line input.

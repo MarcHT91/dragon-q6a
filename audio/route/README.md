@@ -35,4 +35,8 @@ which processes hold `/dev/snd/*`.
   disconnect anything, so this is safe on an unpatched kernel too.
 * Do not use `alsaucm ... _enadev HDMI` on this board.
 
+The script also sets `RX HPH Mode = CLS_AB_LOHIFI`: the default class H clips loud
+peaks (above about -3 dBFS) whatever the analog gain, and the UCM `Headphones`
+sequence puts it back to class H.
+
 Install: `sudo ./install.sh`.
