@@ -2,7 +2,7 @@
 
 [Català](README.ca.md)
 
-Tested on Armbian (Ubuntu 26.04 userspace), kernel 7.2.9-edge-qcs6490.
+Tested on Ubuntu 26.04.1 LTS (rafaelwms image) with the Armbian edge kernel `7.2.9-edge-qcs6490`.
 
 ## GPU acceleration (Adreno 643)
 

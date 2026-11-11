@@ -1,7 +1,7 @@
 # hifi: 24-bit headphone path (qcs6490-hifi)
 
-24-bit headphone output on the Radxa Dragon Q6A (Qualcomm QCS6490, Armbian
-edge kernel 7.2.9). Stock Linux limits the 3.5 mm jack to S16_LE @ 48 kHz,
+24-bit headphone output on the Radxa Dragon Q6A (Qualcomm QCS6490), Ubuntu 26.04.1 LTS
+(rafaelwms image) with the Armbian edge kernel 7.2.9. Stock Linux limits the 3.5 mm jack to S16_LE @ 48 kHz,
 but every one of those limits is in software.
 
 ## Where the limits are
@@ -44,8 +44,8 @@ so S24_LE @ 48 kHz is the best the AirPlay path can carry.
 
 ## Install
 
-Needs `flex bison bc libelf-dev dkms`. With an Armbian `linux-headers-*` package
-for the running kernel:
+Needs `flex bison bc libelf-dev dkms`. With the Armbian `linux-headers-edge-qcs6490`
+package matching the running kernel:
 
     sudo ./install.sh && sudo reboot
 
@@ -98,7 +98,7 @@ Results (2026-11-11, kernel 7.2.9-edge-qcs6490):
   (zero top byte, heavy distortion). Test a source with `lab/signext.py` style tones.
 
 * After an ADSP crash the card does not come back (wcd938x probe -EBUSY): reboot.
-* An Armbian firmware update does not refresh the override in `/lib/firmware/updates`;
+* An update of `firmware-qcom-audioreach` does not refresh the override in `/lib/firmware/updates`;
   re-run `install.sh` if the topology changes.
 * Headphone mixer route must be on: `RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1`
   (UCM `_enadev HDMI` and `_enadev Headphones` disable each other), then `alsactl store`.

@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-Provat amb Armbian (sistema d'Ubuntu 26.04) i el kernel 7.2.9-edge-qcs6490.
+Provat amb Ubuntu 26.04.1 LTS (imatge de rafaelwms) i el kernel edge d'Armbian `7.2.9-edge-qcs6490`.
 
 ## Acceleració de la GPU (Adreno 643)
 

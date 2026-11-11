@@ -2,7 +2,8 @@
 
 [Català](README.ca.md)
 
-Audio fixes for the **Radxa Dragon Q6A** (Qualcomm QCS6490) on Armbian (edge kernel 7.2.9):
+Audio fixes for the **Radxa Dragon Q6A** (Qualcomm QCS6490), on Ubuntu 26.04.1 LTS (rafaelwms image)
+with the Armbian edge kernel `7.2.9-edge-qcs6490`:
 24-bit headphone output, reliable DSP routes for the headphone jack and HDMI, a usable
 `alsamixer`, and an AirPlay 2 receiver (shairport-sync) with hardware volume.
 

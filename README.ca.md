@@ -2,8 +2,8 @@
 
 *[English](README.md)*
 
-Tot el que he fet funcionar a la **Radxa Dragon Q6A** (Qualcomm QCS6490) amb Armbian i el kernel
-7.2.9-edge-qcs6490. Cada directori és independent i té el seu propi README.
+Tot el que he fet funcionar a la **Radxa Dragon Q6A** (Qualcomm QCS6490) amb Ubuntu 26.04.1 LTS
+(imatge de rafaelwms) i el kernel edge d'Armbian `7.2.9-edge-qcs6490`. Cada directori és independent i té el seu propi README.
 
 | Directori | Què hi ha |
 |---|---|

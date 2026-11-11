@@ -2,8 +2,8 @@
 
 *[Català](README.ca.md)*
 
-Everything I got working on the **Radxa Dragon Q6A** (Qualcomm QCS6490) with Armbian, kernel
-7.2.9-edge-qcs6490. Each directory is self-contained and has its own README.
+Everything I got working on the **Radxa Dragon Q6A** (Qualcomm QCS6490) running Ubuntu 26.04.1 LTS
+(rafaelwms image) with the Armbian edge kernel `7.2.9-edge-qcs6490`. Each directory is self-contained and has its own README.
 
 | Directory | What it is |
 |---|---|

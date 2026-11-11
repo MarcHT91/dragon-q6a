@@ -2,7 +2,8 @@
 
 [English](README.md)
 
-Arranjaments d'àudio per a la **Radxa Dragon Q6A** (Qualcomm QCS6490) amb Armbian (kernel edge 7.2.9).
+Arranjaments d'àudio per a la **Radxa Dragon Q6A** (Qualcomm QCS6490), amb Ubuntu 26.04.1 LTS (imatge de
+rafaelwms) i el kernel edge d'Armbian `7.2.9-edge-qcs6490`.
 Inclou la sortida d'auriculars a 24 bits, unes rutes del DSP fiables per al jack d'auriculars i
 per a l'HDMI, un `alsamixer` que es pot fer servir i un receptor AirPlay 2 (shairport-sync) amb
 volum de maquinari.
