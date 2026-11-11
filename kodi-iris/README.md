@@ -65,7 +65,7 @@ install -m 755 kodi-iris /opt/ffmpeg-iris/bin/
 The launcher preloads `libegl_linear_shim.so`, switches on the DSP audio routes for HDMI and the
 headphone jack (they can be lost on reboot; it does not use `alsaucm`, whose HDMI sequence on
 this board disconnects the headphones, see
-[dragon-q6a-audio](https://github.com/MarcHT91/dragon-q6a-audio)), and turns on the shim's limited-range mode when Kodi's *limited colour range*
+[audio](../audio)), and turns on the shim's limited-range mode when Kodi's *limited colour range*
 setting is on (see [HDMI colour range](docs/hdmi-colour-range.md)).
 
 The shim adds the explicit `DRM_FORMAT_MOD_LINEAR` modifier that Kodi leaves out when it

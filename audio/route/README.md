@@ -22,7 +22,7 @@ If a PCM is started while its route is off, it never runs: `state: RUNNING`,
    the `HDMI` device then clears it. Even with the kernel fixed, `alsaucm set
    _verb HiFi set _enadev HDMI` leaves the headphones disconnected.
 3. A Kodi launcher ran exactly that `alsaucm` line at every start (fixed in
-   [kodi-iris](https://github.com/MarcHT91/kodi-iris)).
+   [kodi-iris](../../kodi-iris)).
 
 Found with a boot trace (`diag/`) that logs the route state every 0.5 s and
 which processes hold `/dev/snd/*`.

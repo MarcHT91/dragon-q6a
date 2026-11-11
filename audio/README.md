@@ -51,7 +51,7 @@ Check:
 
 ## Related
 
-* [kodi-iris](https://github.com/MarcHT91/kodi-iris): hardware video decoding in Kodi on the same board.
+* [kodi-iris](../kodi-iris): hardware video decoding in Kodi on the same board.
 
 ## License
 

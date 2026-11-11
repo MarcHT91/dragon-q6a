@@ -1,0 +1,181 @@
+#!/usr/bin/env -S python3 -u
+"""gputop - Adreno (msm) GPU monitor: freq, busy %, per-process usage/memory, temps.
+
+Usage: gputop [-i SECONDS] [-n COUNT]
+Run with sudo to see processes with capabilities (e.g. Kodi), which are
+otherwise not readable from /proc even by the same user.
+"""
+import argparse, glob, os, shutil, sys, time
+
+DF = "/sys/class/devfreq/3d00000.gpu"
+
+
+def rd(p, default=""):
+    try:
+        with open(p) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def gpu_temps():
+    out = []
+    for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
+        t = rd(z + "/type")
+        if t.startswith("gpu"):
+            v = rd(z + "/temp")
+            if v:
+                out.append((t.replace("-thermal", ""), int(v) / 1000))
+    return out
+
+
+def freq_residency():
+    """{freq_hz: ms} from devfreq trans_stat (time column)."""
+    res = {}
+    for line in rd(DF + "/trans_stat").splitlines():
+        parts = line.replace("*", " ").split()
+        if parts and parts[0].endswith(":") and parts[0][:-1].isdigit():
+            res[int(parts[0][:-1])] = int(parts[-1])
+    return res
+
+
+def sample_clients():
+    """{(pid, client_id): {...}} for every msm DRM client we can read."""
+    clients = {}
+    for fdi in glob.glob("/proc/[0-9]*/fdinfo/*"):
+        try:
+            with open(fdi) as f:
+                txt = f.read()
+        except OSError:
+            continue
+        if "drm-driver:\tmsm" not in txt:
+            continue
+        kv = {}
+        for l in txt.splitlines():
+            k, _, v = l.partition(":")
+            kv[k] = v.strip()
+        pid = int(fdi.split("/")[2])
+        cid = kv.get("drm-client-id", fdi)
+        key = (pid, cid)
+        if key in clients:  # same client via dup'd fd
+            continue
+        mem = lambda k: int(kv.get(k, "0").split()[0])  # KiB
+        clients[key] = {
+            "ns": int(kv.get("drm-engine-gpu", "0").split()[0]),
+            "cycles": int(kv.get("drm-cycles-gpu", "0").split()[0]),
+            "total": mem("drm-total-memory"),
+            "resident": mem("drm-resident-memory"),
+            "shared": mem("drm-shared-memory"),
+        }
+    return clients
+
+
+def fmt_kib(k):
+    for unit in ("KiB", "MiB", "GiB"):
+        if k < 1024 or unit == "GiB":
+            return f"{k:.0f} {unit}" if unit == "KiB" else f"{k:.1f} {unit}"
+        k /= 1024
+
+
+def bar(pct, width):
+    n = int(round(min(max(pct, 0), 100) / 100 * width))
+    return "[" + "#" * n + "." * (width - n) + "]"
+
+
+def meminfo():
+    m = {}
+    for l in rd("/proc/meminfo").splitlines():
+        k, _, v = l.partition(":")
+        m[k] = int(v.split()[0])
+    return m
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Adreno GPU monitor")
+    ap.add_argument("-i", "--interval", type=float, default=1.0)
+    ap.add_argument("-n", "--count", type=int, default=0, help="iterations (0 = forever)")
+    a = ap.parse_args()
+
+    if not os.path.isdir(DF):
+        sys.exit(f"gputop: {DF} not found")
+    fmax = int(rd(DF + "/max_freq", "0"))
+    fmin = int(rd(DF + "/min_freq", "0"))
+    is_tty = sys.stdout.isatty()
+
+    prev_c, prev_r, t0 = sample_clients(), freq_residency(), time.monotonic()
+    it = 0
+    try:
+        while True:
+            time.sleep(a.interval)
+            cur_c, cur_r, t1 = sample_clients(), freq_residency(), time.monotonic()
+            dt_ns = (t1 - t0) * 1e9
+            cols = shutil.get_terminal_size((80, 24)).columns
+
+            # per-process aggregation
+            procs = {}
+            total_pct = 0.0
+            for (pid, cid), c in cur_c.items():
+                p = prev_c.get((pid, cid))
+                dns = c["ns"] - p["ns"] if p else 0
+                dcyc = c["cycles"] - p["cycles"] if p else 0
+                pct = 100 * dns / dt_ns if dns > 0 else 0.0
+                total_pct += pct
+                e = procs.setdefault(pid, {"pct": 0.0, "cyc": 0, "dns": 0, "res": 0, "tot": 0, "n": 0})
+                e["pct"] += pct; e["cyc"] += dcyc; e["dns"] += dns
+                e["res"] += c["resident"]; e["tot"] += c["total"]; e["n"] += 1
+            total_pct = min(total_pct, 100.0)
+
+            # frequency: current + time-weighted average over interval
+            fcur = int(rd(DF + "/cur_freq", "0"))
+            dres = {f: cur_r.get(f, 0) - prev_r.get(f, 0) for f in cur_r}
+            dsum = sum(v for v in dres.values() if v > 0)
+            favg = sum(f * v for f, v in dres.items() if v > 0) / dsum if dsum else fcur
+
+            mi = meminfo()
+            gpu_mem = sum(p["res"] for p in procs.values())
+
+            out = []
+            out.append(f"gputop - Adreno (msm)   gov={rd(DF + '/governor')}   {time.strftime('%H:%M:%S')}")
+            bw = max(10, min(50, cols - 40))
+            out.append(f"Busy  {bar(total_pct, bw)} {total_pct:5.1f}%")
+            fpct = 100 * (fcur - fmin) / (fmax - fmin) if fmax > fmin else 0
+            out.append(f"Freq  {bar(fpct, bw)} {fcur // 10**6:4d} MHz  (avg {favg / 1e6:.0f}, max {fmax // 10**6})")
+            temps = gpu_temps()
+            if temps:
+                tmax = max(t for _, t in temps)
+                out.append(f"Temp  " + "  ".join(f"{n} {t:.1f}°C" for n, t in temps)
+                           + ("   ⚠ hot" if tmax >= 90 else ""))
+            out.append(f"Mem   GPU clients {fmt_kib(gpu_mem)} resident   "
+                       f"system {fmt_kib(mi['MemTotal'] - mi['MemAvailable'])} / {fmt_kib(mi['MemTotal'])} used")
+            if dsum:
+                steps = sorted(f for f in dres if dres[f] > 0)
+                out.append("Resid " + "  ".join(f"{f // 10**6}:{100 * dres[f] / dsum:.0f}%" for f in steps))
+            out.append("")
+            out.append(f"{'PID':>7} {'GPU%':>6} {'MHz*':>5} {'RESIDENT':>10} {'TOTAL':>10} {'FDS':>3}  COMMAND")
+            for pid, e in sorted(procs.items(), key=lambda x: (-x[1]["pct"], -x[1]["res"])):
+                eff = e["cyc"] / (e["dns"] / 1e9) / 1e6 if e["dns"] > 0 else 0
+                cmd = rd(f"/proc/{pid}/comm", "?")
+                out.append(f"{pid:>7} {e['pct']:6.1f} {eff:5.0f} {fmt_kib(e['res']):>10} "
+                           f"{fmt_kib(e['tot']):>10} {e['n']:>3}  {cmd}")
+            if not procs:
+                out.append("        (no GPU clients visible)")
+            if os.geteuid() != 0:
+                out.append("\n(not root: processes with capabilities, e.g. Kodi, are hidden - use sudo)")
+            out.append("* MHz = effective clock while busy (cycles / busy time)")
+
+            if is_tty:
+                sys.stdout.write("\033[H\033[J" + "\n".join(l[:cols] for l in out) + "\n")
+            else:
+                sys.stdout.write("\n".join(out) + "\n\n")
+            sys.stdout.flush()
+
+            prev_c, prev_r, t0 = cur_c, cur_r, t1
+            it += 1
+            if a.count and it >= a.count:
+                break
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

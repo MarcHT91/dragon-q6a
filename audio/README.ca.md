@@ -55,7 +55,7 @@ Comprovació:
 
 ## Relacionat
 
-* [kodi-iris](https://github.com/MarcHT91/kodi-iris): descodificació de vídeo per maquinari a Kodi a la mateixa placa.
+* [kodi-iris](../kodi-iris): descodificació de vídeo per maquinari a Kodi a la mateixa placa.
 
 ## Llicència
 

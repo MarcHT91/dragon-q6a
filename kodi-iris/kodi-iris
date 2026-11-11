@@ -2,7 +2,7 @@
 # Obre Kodi amb l'FFmpeg de /opt/ffmpeg-iris (descodificació iris via DRM PRIME).
 # - Activa les rutes del DSP MultiMedia2 -> HDMI (sense ella tvhdmi dona EINVAL) i
 #   MultiMedia1 -> auriculars. No fa servir alsaucm: la seqüència UCM d'HDMI de la placa
-#   desconnecta els auriculars (vegeu github.com/MarcHT91/dragon-q6a-audio).
+#   desconnecta els auriculars (vegeu audio/route a github.com/MarcHT91/dragon-q6a).
 # - libegl_linear_shim.so: afegeix el modificador LINEAR als imports dma-buf d'EGL
 #   (Kodi l'omet i Mesa rebutja els buffers d'iris sense ell). Cal per al renderitzador EGL (4K).
 # - Si Kodi té "Rang de color limitat" activat, el vídeo DRM PRIME també ha de sortir a 16-235

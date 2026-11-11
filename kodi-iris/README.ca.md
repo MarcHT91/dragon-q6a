@@ -67,7 +67,7 @@ install -m 755 kodi-iris /opt/ffmpeg-iris/bin/
 El llançador precarrega `libegl_linear_shim.so`, activa les rutes d'àudio del DSP cap a l'HDMI i
 cap als auriculars (es poden perdre en reiniciar; no fa servir `alsaucm`, perquè la seqüència
 d'HDMI d'aquesta placa desconnecta els auriculars, vegeu
-[dragon-q6a-audio](https://github.com/MarcHT91/dragon-q6a-audio)) i, si el Kodi té activada l'opció de *rang de color limitat*, activa el mode
+[audio](../audio)) i, si el Kodi té activada l'opció de *rang de color limitat*, activa el mode
 de rang limitat del shim (vegeu [Rang de color HDMI](docs/hdmi-colour-range.ca.md)).
 
 El shim afegeix el modificador explícit `DRM_FORMAT_MOD_LINEAR`, que el Kodi omet quan importa
