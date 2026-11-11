@@ -13,8 +13,8 @@ Tot el que he fet funcionar a la **Radxa Dragon Q6A** (Qualcomm QCS6490) amb Ubu
 | [`npu/`](npu) | LFM3-1.7B (Liquid AI) executant-se del tot a la NPU Hexagon HTP v68 amb `onnxruntime-qnn`, sense el SDK de Qualcomm. |
 
 Els arranjaments es fan des de la placa: mòduls del kernel, configuració i scripts, i no amb
-ajustos a la TV o al monitor. Els pedaços del kernel pensats per enviar als desenvolupadors del
-kernel són a [`audio/hifi/upstream`](audio/hifi/upstream).
+ajustos a la TV o al monitor. Els pedaços del kernel enviats als desenvolupadors del
+kernel (2026-11-11) són a [`audio/hifi/upstream`](audio/hifi/upstream).
 
 ## Historial
 

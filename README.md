@@ -13,7 +13,7 @@ Everything I got working on the **Radxa Dragon Q6A** (Qualcomm QCS6490) running 
 | [`npu/`](npu) | LFM3-1.7B (Liquid AI) running entirely on the Hexagon HTP v68 NPU with `onnxruntime-qnn`, without the Qualcomm SDK. |
 
 The fixes are done on the board side: kernel modules, configuration and scripts, not settings
-on the TV or the monitor. Kernel patches meant for upstream are in
+on the TV or the monitor. Kernel patches sent upstream (2026-11-11) are in
 [`audio/hifi/upstream`](audio/hifi/upstream).
 
 ## History

@@ -1,0 +1,51 @@
+From bc671558eb85668c5ea0731a6c9c5eb83f9023e3 Mon Sep 17 00:00:00 2001
+From: Marc Herrero <marcht@proton.me>
+Date: Wed, 11 Nov 2026 10:47:28 +0000
+Subject: [PATCH 2/2] ASoC: qcom: audioreach: only disconnect the route a mixer
+ control owns
+
+Each AudioReach virtual mixer route control ("<BE> Audio Mixer <FE>")
+connects a front-end stream graph to a back-end device graph by storing
+the source module in the device graph's audioreach_graph_info. Writing 0
+to any of these controls clears that link unconditionally, even when the
+device graph is connected to a different front end.
+
+When two front ends can feed the same back end the result therefore
+depends on write order. On QCS6490 (Radxa Dragon Q6A):
+
+ - alsactl restore writes 'DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' = 1
+   and then 'DISPLAY_PORT_RX_0 Audio Mixer MultiMedia1' = 0, which leaves
+   DisplayPort disconnected although the saved state has it connected;
+ - the UCM HDMI enable sequence writes
+   'RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' = 0, which disconnects
+   MultiMedia1 from the headphones. A PCM started on MultiMedia1 after
+   that never advances (hw_ptr stays at 0).
+
+Only drop the link when it belongs to the control being cleared, that is
+when audioreach_is_vmixer_connected() reports it as connected. Writing 0
+to a control that is not the active route becomes a no-op, which matches
+what its get() callback already returns.
+
+Fixes: e4977b91cff8 ("ASoC: qdsp6: audioreach: Simplify handing FE and BE graph connections")
+Cc: stable@vger.kernel.org
+Signed-off-by: Marc Herrero <marcht@proton.me>
+---
+ sound/soc/qcom/qdsp6/topology.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
+index 612d8f03e6e9..e92408e09bac 100644
+--- a/sound/soc/qcom/qdsp6/topology.c
++++ b/sound/soc/qcom/qdsp6/topology.c
+@@ -1300,7 +1300,7 @@ static int audioreach_put_audio_mixer(struct snd_kcontrol *kcontrol,
+ 	if (ucontrol->value.integer.value[0]) {
+ 		audioreach_connect_sub_graphs(data, scontrol, dapm_scontrol, true);
+ 		snd_soc_dapm_mixer_update_power(dapm, kcontrol, 1, NULL);
+-	} else {
++	} else if (audioreach_is_vmixer_connected(data, scontrol, dapm_scontrol)) {
+ 		audioreach_connect_sub_graphs(data, scontrol, dapm_scontrol, false);
+ 		snd_soc_dapm_mixer_update_power(dapm, kcontrol, 0, NULL);
+ 	}
+-- 
+2.53.0
+
