@@ -33,6 +33,15 @@ volum de maquinari.
   sortida, fos quin fos el flux connectat. Per això `alsactl restore` perdia l'HDMI a cada arrencada,
   i la seqüència UCM d'HDMI de la placa desconnectava els auriculars.
   → [`hifi/upstream/0002`](hifi/upstream), [`route/`](route)
+* **El volum del DSP només s'aplicava en començar un flux.** `audioreach_put_vol_ctrl_audio_mixer()`
+  desava el guany nou però no l'enviava al DSP, i només ho feia l'esdeveniment d'encesa del widget.
+  Els canvis de volum d'AirPlay durant la reproducció no feien res, i un guany de 0 dB que s'havia
+  quedat de la sessió anterior sonava distorsionat. El DKMS ara envia el guany a l'instant si el
+  flux està sonant.
+* **L'amplificador d'auriculars retallava en classe H.** Amb el mode per defecte, `RX HPH Mode =
+  CLS_H_LOHIFI`, la tensió d'alimentació no segueix els pics forts: un to per sobre d'uns -3 dBFS
+  distorsiona fins i tot amb el guany analògic 15 dB més avall. Amb `CLS_AB_LOHIFI` és net fins a
+  -0,5 dBFS amb el guany sencer, i `route/` el posa en cada arrencada.
 * Un flux que comença amb la seva ruta desactivada no avança mai (`hw_ptr` es queda a 0). Així és
   com s'encallava shairport-sync, que a més ignorava el SIGTERM.
 * **AirPlay 2** des d'un iPhone (Tidal, fins i tot en hi-res) arriba com a `AAC/48000/F24/2`. Per

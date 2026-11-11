@@ -7,7 +7,7 @@
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 kver="${KVER:-$(uname -r)}"
-ver=0.5
+ver=0.6
 name=qcs6490-hifi
 
 # 1. kernel build tree for DKMS (only if no headers package provides one)

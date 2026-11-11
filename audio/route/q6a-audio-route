@@ -1,6 +1,7 @@
 #!/bin/sh
 # Dragon Q6A: make sure the DSP routes to the outputs are on before any player
-# opens the card. The saved mixer state (alsactl) does not reliably restore
+# opens the card, and put the headphone amplifier in class AB.
+# The saved mixer state (alsactl) does not reliably restore
 # 'RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1' at boot; a PCM started while it is
 # off never runs (hw_ptr stays 0) until the player reopens the device.
 dev=sysdefault:QCS6490RadxaDra
@@ -11,3 +12,8 @@ until amixer -q -D "$dev" cget name='RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1' 
 done
 amixer -q -D "$dev" cset name='RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1' on,off   # hw:0,0 -> headphones
 amixer -q -D "$dev" cset name='DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' on,off   # hw:0,1 -> HDMI/DP
+# Headphone amplifier in class AB: in the default class H (CLS_H_LOHIFI, also set by
+# the UCM Headphones sequence) the supply rail does not follow loud peaks and the
+# output clips above about -3 dBFS, whatever the analog gain. Read at power-up.
+amixer -q -D "$dev" cset name='RX HPH Mode' CLS_AB_LOHIFI
+amixer -q -D "$dev" cset name='RX_HPH PWR Mode' LOHIFI

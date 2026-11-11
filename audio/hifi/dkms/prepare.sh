@@ -104,6 +104,19 @@ perl -0pi -e 's#\t\} else \{\n(\t\taudioreach_connect_sub_graphs\(data, scontrol
 grep -q 'else if (audioreach_is_vmixer_connected(data, scontrol, dapm_scontrol))' "$t"
 fi
 
+# topology: the stream volume control only stored the new gain; the DSP got it
+# from the widget's POST_PMU event, i.e. only when a stream starts. Changes
+# while playing (e.g. the AirPlay volume) were ignored. Send it right away when
+# the volume widget is powered.
+if ! grep -q 'qcs6490-hifi: apply volume' "$t"; then
+grep -qzF '	mod->gain = ucontrol->value.integer.value[0];
+
+	return 1;
+}' "$t" || { echo "qcs6490-hifi: put_vol_ctrl pattern not found" >&2; exit 1; }
+perl -0pi -e 's#\tmod->gain = ucontrol->value.integer.value\[0\];\n\n\treturn 1;\n\}#\tlong gain = ucontrol->value.integer.value[0];\n\n\tif (mod->gain == gain)\n\t\treturn 0;\n\n\tmod->gain = gain;\n\n\t/* qcs6490-hifi: apply volume now if the graph is running */\n\tif (dw->power) {\n\t\tstruct snd_soc_component *c = snd_soc_dapm_to_component(dw->dapm);\n\n\t\taudioreach_gain_set_vol_ctrl(dev_get_drvdata(c->dev), mod, gain);\n\t}\n\n\treturn 1;\n}#' "$t"
+grep -q 'qcs6490-hifi: apply volume' "$t"
+fi
+
 # Kernel headers packages (e.g. Armbian linux-headers-*) ship Module.symvers;
 # for a hand-prepared tree, derive module exports from the installed modules.
 if [ -s "$ksrc/Module.symvers" ]; then

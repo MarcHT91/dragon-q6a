@@ -29,6 +29,13 @@ with the Armbian edge kernel `7.2.9-edge-qcs6490`:
 * **Routes got lost.** In `topology.c`, writing 0 to any route control disconnected the back end,
   whichever stream was connected. `alsactl restore` lost HDMI on every boot, and the board's UCM
   HDMI sequence disconnected the headphones. → [`hifi/upstream/0002`](hifi/upstream), [`route/`](route)
+* **The DSP volume only applied when a stream started.** `audioreach_put_vol_ctrl_audio_mixer()`
+  stored the new gain but never sent it; the widget's power-up event did. AirPlay volume changes
+  during playback did nothing (and a 0 dB leftover gain sounded distorted). The DKMS sends the gain
+  right away when the graph is running.
+* **The headphone amplifier clipped in class H.** In the default `RX HPH Mode = CLS_H_LOHIFI` the
+  supply rail does not follow loud peaks: a sine above about -3 dBFS distorts even with the analog
+  gain 15 dB down. `CLS_AB_LOHIFI` is clean up to -0.5 dBFS at full gain; `route/` sets it at boot.
 * A PCM started while its route is off never runs (`hw_ptr` stays 0). shairport-sync used to stall
   this way and ignored SIGTERM.
 * **AirPlay 2** from an iPhone (Tidal, including hi-res) arrives as `AAC/48000/F24/2`: no
