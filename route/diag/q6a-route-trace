@@ -1,0 +1,32 @@
+#!/bin/sh
+# Boot-time trace of the Dragon Q6A DSP output routes (diagnostics only).
+out=/var/log/q6a-route-trace.log
+dev=sysdefault:QCS6490RadxaDra
+exec > "$out" 2>&1
+chmod 644 "$out"
+up() { cut -d' ' -f1 /proc/uptime; }
+get() { amixer -D "$dev" cget name="$1" 2>/dev/null | sed -n 's/^  : values=//p'; }
+users() {
+	for p in /proc/[0-9]*; do
+		[ "$(cat "$p/comm" 2>/dev/null)" = amixer ] && continue
+		ls -l "$p/fd" 2>/dev/null | grep -q '/dev/snd/' || continue
+		printf '%s(%s) ' "$(cat "$p/comm")" "$(ls -l "$p/fd" 2>/dev/null | grep -o '/dev/snd/[a-zA-Z0-9]*' | sort -u | tr '\n' ',')"
+	done
+}
+echo "boot trace start uptime=$(up)"
+prev=""
+i=0
+while [ $i -lt 180 ]; do
+	if grep -q QCS6490 /proc/asound/cards 2>/dev/null; then
+		cur="MM1->HP=$(get 'RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1') MM2->DP=$(get 'DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2') HPvol=$(get 'HP Volume')"
+	else
+		cur="no card"
+	fi
+	u="$(users)"
+	[ "$cur $u" != "$prev" ] && echo "$(up) $cur | open: $u"
+	prev="$cur $u"
+	i=$((i + 1)); sleep 0.5
+done
+echo "--- journal"
+journalctl -b -o short-monotonic --no-pager | grep -iE 'alsa|alsactl|sound|asoc|q6apm|qcom-apm|card|kodi|shairport|snd|ucm|wcd' | head -150
+echo "trace end uptime=$(up)"

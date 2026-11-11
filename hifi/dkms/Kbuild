@@ -1,0 +1,4 @@
+obj-m += snd-soc-sc8280xp.o snd-q6apm.o
+snd-soc-sc8280xp-y := src/sc8280xp.o
+snd-q6apm-y := src/qdsp6/q6apm.o src/qdsp6/audioreach.o src/qdsp6/topology.o
+ccflags-y += -I$(src)/src

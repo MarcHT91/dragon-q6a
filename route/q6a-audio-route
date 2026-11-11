@@ -1,0 +1,13 @@
+#!/bin/sh
+# Dragon Q6A: make sure the DSP routes to the outputs are on before any player
+# opens the card. The saved mixer state (alsactl) does not reliably restore
+# 'RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1' at boot; a PCM started while it is
+# off never runs (hw_ptr stays 0) until the player reopens the device.
+dev=sysdefault:QCS6490RadxaDra
+i=0
+until amixer -q -D "$dev" cget name='RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1' 2>/dev/null; do
+	i=$((i + 1)); [ $i -ge 60 ] && { echo "q6a-audio-route: card not ready" >&2; exit 1; }
+	sleep 0.5
+done
+amixer -q -D "$dev" cset name='RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia1' on,off   # hw:0,0 -> headphones
+amixer -q -D "$dev" cset name='DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' on,off   # hw:0,1 -> HDMI/DP

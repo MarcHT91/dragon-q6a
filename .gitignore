@@ -1,0 +1,11 @@
+*.ko
+*.o
+*.mod
+*.mod.c
+.*.cmd
+modules.order
+Module.symvers
+hifi/dkms/src/
+hifi/dkms/installed.symvers
+alsa-ctl-filter/*.so
+__pycache__/

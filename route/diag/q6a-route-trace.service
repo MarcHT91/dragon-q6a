@@ -1,0 +1,11 @@
+[Unit]
+Description=Dragon Q6A: boot trace of DSP output routes (diagnostics)
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/q6a-route-trace
+
+[Install]
+WantedBy=sysinit.target
