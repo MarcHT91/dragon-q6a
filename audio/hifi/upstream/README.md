@@ -9,4 +9,8 @@ Sent to the ALSA/ASoC maintainers on 2026-11-11 as
 * `0002`: a route mixer write of 0 only disconnects the link that control owns.
   Fixes: e4977b91cff8 ("ASoC: qdsp6: audioreach: Simplify handing FE and BE graph connections")
 
+* `0003`: volume control changes are sent to the DSP while the graph runs.
+  Sent separately on 2026-11-11 as "[PATCH] ASoC: qcom: audioreach: apply volume changes to a running graph".
+  Fixes: 36ad9bf1d93d ("ASoC: qdsp6: audioreach: add topology support")
+
 The DKMS in `../dkms` applies the same changes to the running kernel's sources.

@@ -1,0 +1,54 @@
+From 4289df7bc5b23a0c262270fc817220834275dbea Mon Sep 17 00:00:00 2001
+From: Marc Herrero <marcht@proton.me>
+Date: Wed, 11 Nov 2026 13:43:58 +0000
+Subject: [PATCH] ASoC: qcom: audioreach: apply volume changes to a running
+ graph
+
+audioreach_put_vol_ctrl_audio_mixer() only stores the new gain in the
+module. The gain reaches the DSP from audioreach_pga_event() on
+SND_SOC_DAPM_POST_PMU, that is when a stream starts, so changing the
+"<stream> Playback Volume" control while playing has no effect until the
+next stream.
+
+On QCS6490 (Radxa Dragon Q6A) shairport-sync uses this control as its
+hardware volume: the volume set when an AirPlay session starts is
+applied, but every later change from the phone is ignored.
+
+Send the gain to the DSP right away when the widget is powered, and
+report no change when the value is the same.
+
+Fixes: 36ad9bf1d93d ("ASoC: qdsp6: audioreach: add topology support")
+Cc: stable@vger.kernel.org
+Signed-off-by: Marc Herrero <marcht@proton.me>
+---
+ sound/soc/qcom/qdsp6/topology.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
+index 612d8f03e6e9..5b3378fd29fc 100644
+--- a/sound/soc/qcom/qdsp6/topology.c
++++ b/sound/soc/qcom/qdsp6/topology.c
+@@ -1323,8 +1323,19 @@ static int audioreach_put_vol_ctrl_audio_mixer(struct snd_kcontrol *kcontrol,
+ {
+ 	struct snd_soc_dapm_widget *dw = snd_soc_dapm_kcontrol_to_widget(kcontrol);
+ 	struct audioreach_module *mod = dw->dobj.private;
++	long gain = ucontrol->value.integer.value[0];
+ 
+-	mod->gain = ucontrol->value.integer.value[0];
++	if (mod->gain == gain)
++		return 0;
++
++	mod->gain = gain;
++
++	/* The PGA event only applies the gain when the widget powers up */
++	if (dw->power) {
++		struct snd_soc_component *c = snd_soc_dapm_to_component(dw->dapm);
++
++		audioreach_gain_set_vol_ctrl(dev_get_drvdata(c->dev), mod, gain);
++	}
+ 
+ 	return 1;
+ }
+-- 
+2.53.0
+
