@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kodi-iris contributors <kodi-iris@invalid>
+Date: Sat, 7 Nov 2026 11:34:05 +0000
+Subject: [PATCH 2/5] v4l2_m2m_dec: fail promptly when capture cannot restart
+ after source change
+
+Symptom: hevc_v4l2m2m on a 10-bit HEVC stream (which iris_driver
+reports as NV12 at source change, then refuses with REQBUFS EBUSY) took
+~12 s to fail: four 3 s capture poll timeouts ending in "A decoder
+returned an unexpected error code" (ffmpeg exit 190). With -v debug the
+same failure could even end as a silent EOF with 0 frames and exit 0.
+
+do_source_change() ignored the result of the capture STREAMON (which
+also covers buffer allocation), returned "reinit OK" and left the
+decoder polling a capture queue with no buffers. Return the error so
+get_qbuf() marks capture done and reports it, and stop the receive_frame
+loop on a hard dequeue error instead of looping into the done capture
+context, which turned the error into a plain EOF.
+
+Verified: hevc10 now fails in ~70 ms with EINVAL (ffmpeg exit 69;
+avcodec API consumer gets AVERROR(EINVAL)). tests/run-matrix.sh: all
+27 cases PASS.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libavcodec/v4l2_context.c | 7 +++++++
+ libavcodec/v4l2_m2m_dec.c | 7 ++++++-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/libavcodec/v4l2_context.c b/libavcodec/v4l2_context.c
+index 8be37aafed..52bd399a7a 100644
+--- a/libavcodec/v4l2_context.c
++++ b/libavcodec/v4l2_context.c
+@@ -387,6 +387,13 @@ static int do_source_change(V4L2m2mContext * const s)
+     }
+ 
+     ret = ff_v4l2_context_set_status(&s->capture, VIDIOC_STREAMON);
++    if (ret) {
++        // Without a running capture Q nothing more will ever be decoded
++        // (e.g. the driver refused to allocate buffers for this stream), so
++        // fail now rather than poll for frames that cannot arrive.
++        av_log(avctx, AV_LOG_ERROR, "Source change: capture restart failed: %s\n", av_err2str(ret));
++        return ret;
++    }
+     return 1;
+ }
+ 
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index 1946166ced..23157f8308 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -687,9 +687,14 @@ static int v4l2_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+             else if (dst_rv == AVERROR_EOF && (s->draining || s->capture.done))
+                 av_log(avctx, AV_LOG_DEBUG, "Dequeue EOF: draining=%d, cap.done=%d\n",
+                        s->draining, s->capture.done);
+-            else if (dst_rv && dst_rv != AVERROR(EAGAIN))
++            else if (dst_rv && dst_rv != AVERROR(EAGAIN)) {
+                 av_log(avctx, AV_LOG_ERROR, "Packet dequeue failure: draining=%d, cap.done=%d, err=%d\n",
+                        s->draining, s->capture.done, dst_rv);
++                // Hard error: report it now. Looping would only find the
++                // capture context done and turn the error into a plain EOF.
++                if (dst_rv != AVERROR_EOF)
++                    break;
++            }
+         }
+ 
+         ++i;

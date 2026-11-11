@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kodi-iris contributors <kodi-iris@invalid>
+Date: Sat, 7 Nov 2026 12:58:46 +0000
+Subject: [PATCH 4/5] hevcdec: refuse >8-bit streams at open when DRM_PRIME is
+ preset
+
+Kodi's DRMPRIME codec retries with the software decoder after a hardware
+decoder refuses a stream, presetting pix_fmt=DRM_PRIME; its get_format only
+accepts 8-bit software formats, so 10-bit HEVC failed on every frame (black
+screen).  Failing avcodec_open2 makes Kodi fall back to its plain FFmpeg
+software decoder, which handles 10-bit.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libavcodec/hevc/hevcdec.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index a625d3ab88..f11e4f6af4 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -4201,11 +4201,30 @@ static av_cold int hevc_decode_init(AVCodecContext *avctx)
+         const AVPacketSideData *sd;
+ 
+         if (avctx->extradata_size > 0 && avctx->extradata) {
++            /* A caller that presets DRM_PRIME on this software decoder (Kodi's
++             * DRMPRIME path after a hardware decoder refused the stream) can
++             * only take 8-bit software formats.  Refuse >8-bit streams at open
++             * so the caller falls back to its plain software decoder instead
++             * of failing every frame in get_format. */
++            const int want_drm_prime = avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME;
++
+             ret = hevc_decode_extradata(s, avctx->extradata, avctx->extradata_size, 1);
+             if (ret < 0) {
+                 return ret;
+             }
+ 
++            if (want_drm_prime) {
++                for (int i = 0; i < FF_ARRAY_ELEMS(s->ps.sps_list); i++) {
++                    const HEVCSPS *sps = s->ps.sps_list[i];
++                    if (sps && sps->bit_depth > 8) {
++                        av_log(avctx, AV_LOG_INFO,
++                               "DRM_PRIME requested but stream is %d-bit: refusing\n",
++                               sps->bit_depth);
++                        return AVERROR(ENOSYS);
++                    }
++                }
++            }
++
+             ret = hevc_sei_to_context(avctx, &s->sei);
+             if (ret < 0)
+                 return ret;

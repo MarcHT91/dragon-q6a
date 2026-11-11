@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kodi-iris contributors <kodi-iris@invalid>
+Date: Sat, 7 Nov 2026 11:41:44 +0000
+Subject: [PATCH 3/5] v4l2_m2m_dec: refuse >8-bit streams at open for
+ iris_driver
+
+Symptom: a 10-bit HEVC stream (tests/media/hevc10_1920x1080.mkv, and
+real content such as an x265 Main10 episode) opened fine on iris; the
+driver then reported NV12 at source change and failed capture REQBUFS
+with EBUSY, so the error only surfaced at the first send/receive. A
+caller like Kodi's DRM_PRIME path falls back to software when
+avcodec_open2() fails, not reliably on a mid-stream error.
+
+iris on this kernel exposes no >8-bit capture format. Add
+FF_V4L2_QUIRK_8BIT_ONLY, set for "iris_driver" only (other V4L2 M2M
+drivers do decode 10-bit), and when set refuse at init with
+AVERROR(ENOTSUP) if the stream is known to be >8-bit. The depth comes,
+in order, from the SPS in extradata (exact, works when the caller sets
+nothing but extradata), from sw_pix_fmt / pix_fmt if a software format
+is set, then from profiles that imply >8 bits (HEVC Main10, H.264
+High10/422/444, VP9 profile 2/3). Unknown depth is never rejected.
+
+The HEVC branch of parse_extradata() tested ff_hevc_decode_extradata()
+> 0, but that function returns 0 on success, so its SPS was never used
+(profile, level, reorder_size, now bit depth). Test >= 0.
+
+Verified: hevc10 and the Main10 episode fail in avcodec_open2 with
+"Operation not supported" in ~50-70 ms, also with pix_fmt/profile
+cleared (extradata only); 8-bit HEVC/H.264 pass the check ("from
+SPS"), VP9 profile 0 passes, VP9 with no hints gives depth 0 and is
+accepted. tests/run-matrix.sh: all 27 cases PASS.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libavcodec/v4l2_m2m.h     |  3 ++
+ libavcodec/v4l2_m2m_dec.c | 69 ++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 71 insertions(+), 1 deletion(-)
+
+diff --git a/libavcodec/v4l2_m2m.h b/libavcodec/v4l2_m2m.h
+index b958a0ac34..c9279e39e4 100644
+--- a/libavcodec/v4l2_m2m.h
++++ b/libavcodec/v4l2_m2m.h
+@@ -112,6 +112,8 @@ typedef struct V4L2m2mContext {
+     /* req pkt */
+     int req_pkt;
+     int reorder_size;
++    /* Luma bit depth from the SPS in extradata, 0 if unknown */
++    int sps_bit_depth;
+ 
+     /* Ext data sent */
+     int extdata_sent;
+@@ -122,6 +124,7 @@ typedef struct V4L2m2mContext {
+ #define FF_V4L2_QUIRK_REINIT_ALWAYS             1
+ #define FF_V4L2_QUIRK_ENUM_FRAMESIZES_BROKEN    2
+ #define FF_V4L2_QUIRK_8192_MACRO_MAX            4   // Size limited to 8192 macroblocks
++#define FF_V4L2_QUIRK_8BIT_ONLY                 8   // Only 8-bit content decodes (iris: >8-bit fails at capture REQBUFS)
+     /* Quirks */
+     unsigned int quirks;
+ 
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index 23157f8308..82e78f4ae8 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -1038,6 +1038,11 @@ get_quirks(AVCodecContext * const avctx, V4L2m2mContext * const s)
+     // RPI has a max 8192 macroblock limit but no way of signaling it
+     if (strcmp(cap.driver, "bcm2835-codec") == 0)
+         s->quirks |= FF_V4L2_QUIRK_8192_MACRO_MAX;
++    // Qualcomm iris (as of this kernel) offers no >8-bit capture format: a
++    // 10-bit stream gets NV12 at source change and then REQBUFS fails, i.e.
++    // only after decode has started. Refuse such streams at open instead.
++    if (strcmp(cap.driver, "iris_driver") == 0)
++        s->quirks |= FF_V4L2_QUIRK_8BIT_ONLY;
+ 
+     av_log(avctx, AV_LOG_DEBUG, "Driver '%s': Quirks=%#x\n", cap.driver, s->quirks);
+     return 0;
+@@ -1065,6 +1070,7 @@ static void
+ parse_extradata(AVCodecContext * const avctx, V4L2m2mContext * const s)
+ {
+     s->reorder_size = 0;
++    s->sps_bit_depth = 0;
+ 
+     if (!avctx->extradata || !avctx->extradata_size)
+         return;
+@@ -1096,6 +1102,7 @@ parse_extradata(AVCodecContext * const avctx, V4L2m2mContext * const s)
+                     avctx->profile = ff_h264_get_profile(sps);
+                     avctx->level = sps->level_idc;
+                     s->reorder_size = sps->num_reorder_frames;
++                    s->sps_bit_depth = FFMAX(sps->bit_depth_luma, sps->bit_depth_chroma);
+                 }
+             }
+             ff_h264_ps_uninit(&ps);
+@@ -1117,7 +1124,8 @@ parse_extradata(AVCodecContext * const avctx, V4L2m2mContext * const s)
+             ret = ff_hevc_decode_extradata(avctx->extradata, avctx->extradata_size,
+                                            &ps, &sei, &is_nalff, &nal_length_size,
+                                            avctx->err_recognition, 0, avctx);
+-            if (ret > 0) {
++            // Unlike the H.264 version this returns 0 on success
++            if (ret >= 0) {
+                 const HEVCSPS * sps = NULL;
+                 unsigned int i;
+                 for (i = 0; i != HEVC_MAX_SPS_COUNT; ++i) {
+@@ -1130,6 +1138,7 @@ parse_extradata(AVCodecContext * const avctx, V4L2m2mContext * const s)
+                     avctx->profile = sps->ptl.general_ptl.profile_idc;
+                     avctx->level   = sps->ptl.general_ptl.level_idc;
+                     s->reorder_size = sps->temporal_layer[sps->max_sub_layers - 1].max_dec_pic_buffering;
++                    s->sps_bit_depth = FFMAX(sps->bit_depth, sps->bit_depth_chroma);
+                 }
+             }
+             ff_hevc_ps_uninit(&ps);
+@@ -1230,6 +1239,53 @@ error:
+     return rv;
+ }
+ 
++// Best guess at the coded bit depth before decoding starts; 0 if unknown.
++// Order: SPS from extradata (exact), pixel format set by the caller /
++// demuxer, then profiles that imply >8 bits. Profiles that merely allow
++// >8 bits (e.g. HEVC RExt) give 0.
++static int
++stream_bit_depth(const AVCodecContext *const avctx, const V4L2m2mContext *const s, const char **src)
++{
++    const AVPixFmtDescriptor *desc;
++
++    if (s->sps_bit_depth > 0) {
++        *src = "SPS";
++        return s->sps_bit_depth;
++    }
++    if ((desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt)) != NULL &&
++        !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) {
++        *src = "sw_pix_fmt";
++        return desc->comp[0].depth;
++    }
++    if ((desc = av_pix_fmt_desc_get(avctx->pix_fmt)) != NULL &&
++        !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) {
++        *src = "pix_fmt";
++        return desc->comp[0].depth;
++    }
++    *src = "profile";
++    switch (avctx->codec_id) {
++    case AV_CODEC_ID_HEVC:
++        return avctx->profile == AV_PROFILE_HEVC_MAIN_10 ? 10 : 0;
++    case AV_CODEC_ID_H264:
++        switch (avctx->profile) {
++        case AV_PROFILE_H264_HIGH_10:
++        case AV_PROFILE_H264_HIGH_10_INTRA:
++        case AV_PROFILE_H264_HIGH_422:
++        case AV_PROFILE_H264_HIGH_422_INTRA:
++        case AV_PROFILE_H264_HIGH_444:
++        case AV_PROFILE_H264_HIGH_444_PREDICTIVE:
++        case AV_PROFILE_H264_HIGH_444_INTRA:
++            return 10;
++        default:
++            return 0;
++        }
++    case AV_CODEC_ID_VP9:
++        return avctx->profile == AV_PROFILE_VP9_2 || avctx->profile == AV_PROFILE_VP9_3 ? 10 : 0;
++    default:
++        return 0;
++    }
++}
++
+ static av_cold int v4l2_decode_init(AVCodecContext *avctx)
+ {
+     V4L2Context *capture, *output;
+@@ -1314,6 +1370,17 @@ static av_cold int v4l2_decode_init(AVCodecContext *avctx)
+     if ((ret = get_quirks(avctx, s)) != 0)
+         return ret;
+ 
++    if ((s->quirks & FF_V4L2_QUIRK_8BIT_ONLY) != 0) {
++        const char *src = "";
++        const int depth = stream_bit_depth(avctx, s, &src);
++        if (depth > 8) {
++            av_log(avctx, AV_LOG_WARNING, "%d-bit stream (from %s, profile %d) not supported by this driver - refusing at open\n",
++                   depth, src, avctx->profile);
++            return AVERROR(ENOTSUP);
++        }
++        av_log(avctx, AV_LOG_VERBOSE, "Bit depth check: %d (from %s) OK\n", depth, depth ? src : "none");
++    }
++
+     if ((ret = check_profile(avctx, s)) != 0) {
+         av_log(avctx, AV_LOG_WARNING, "Profile %d not supported by decode\n", avctx->profile);
+         return ret;

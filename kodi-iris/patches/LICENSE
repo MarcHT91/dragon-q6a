@@ -1,0 +1,5 @@
+The patches in this directory modify FFmpeg and are licensed under FFmpeg's
+licence: the GNU Lesser General Public License, version 2.1 or (at your option)
+any later version (LGPL-2.1-or-later). See https://ffmpeg.org/legal.html.
+
+The rest of this repository is under the MIT licence (../LICENSE).
