@@ -1,0 +1,17 @@
+kgsl/build/
+kgsl/adreno/
+kgsl/adreno-env.sh
+kgsl/*.log
+kgsl/dmesg*.txt
+opencl/gemm
+opencl/clml_bench
+ncnn/patch-build/
+*.ncnn.*
+*.pnnx.*
+*.pt
+*.onnx
+__pycache__/
+ncnn-build/
+llamacpp/llama.cpp/
+llamacpp/build-in-docker.sh
+ncnn/ncnn-build/
