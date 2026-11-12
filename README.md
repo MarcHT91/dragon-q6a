@@ -10,7 +10,7 @@ Everything I got working on the **Radxa Dragon Q6A** (Qualcomm QCS6490) running 
 | [`board/`](board) | General setup: GPU acceleration (Adreno 643), CPU/network/zram/writeback tuning, a GPU monitor (`gputop`). |
 | [`audio/`](audio) | Audio: 24-bit headphone path (DKMS with two kernel fixes), DSP routes that no longer get lost, a usable `alsamixer`, AirPlay 2 (shairport-sync) with hardware volume. |
 | [`kodi-iris/`](kodi-iris) | Hardware video decoding in Kodi with the iris decoder (V4L2 mem2mem, DRM PRIME), 4K through EGL, and the HDMI colour range with the onboard RA620 DP→HDMI converter. |
-| [`npu/`](npu) | LFM3-1.7B (Liquid AI) running entirely on the Hexagon HTP v68 NPU with `onnxruntime-qnn`, without the Qualcomm SDK. |
+| [`npu/`](npu) | LFM3-1.7B (Liquid AI) running entirely on the Hexagon HTP v68 NPU, without the Qualcomm SDK: graphs compiled with `onnxruntime-qnn`, run by a native QNN runner (11.7 tok/s) or ONNX Runtime. |
 
 The fixes are done on the board side: kernel modules, configuration and scripts, not settings
 on the TV or the monitor. Kernel patches sent upstream (2026-11-11) are in

@@ -150,6 +150,17 @@ $P npu/test_feed_lfm3.py    models/LFM3-1.7B build/npu                          
 
 ## 8. Run [NPU]
 
+Optional but recommended: build the native runner (~1.5× faster decode, same outputs). It
+fetches the public QNN API headers from Ubuntu's Qualcomm PPA and needs `g++`:
+
+```bash
+native/build.sh                 # -> native/libqnnrun.so
+$P npu/test_native.py ort       # reference from ONNX Runtime (own process)
+$P npu/test_native.py native                     # same logits/tokens? + speed
+```
+
+Then:
+
 ```bash
 $P npu/chat.py                  # interactive, no thinking
 $P npu/chat.py --think          # with <think> reasoning (3-5x longer answers)
@@ -160,17 +171,18 @@ From Python:
 ```python
 import sys; sys.path.insert(0, "npu")
 from chat_format import ChatFormat
-from lfm3_npu import LFM3NPU
+from runtime import load_model          # native if native/libqnnrun.so exists, else ONNX Runtime
 
-cf = ChatFormat(); m = LFM3NPU("build/npu")
+cf = ChatFormat(); m = load_model("build/npu")
 ids = cf.encode([{"role": "user", "content": "Hello!"}])
 out, stats = m.generate(ids, 128)          # greedy
 print(cf.tok.decode(out), stats)
 ```
 
 `feed(ids)` uses the prefill graphs for whole 16-token chunks and the decode graphs for the
-rest. Keep one `LFM3NPU` alive in a long-running process instead of starting many short
-processes ([TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
+rest. Keep one model alive in a long-running process instead of starting many short
+processes, and never load both runtimes in the same process
+([TROUBLESHOOTING.md](TROUBLESHOOTING.md)). `prof_decode.py` shows where the decode time goes.
 
 Tool calling: pass OpenAI-style tool schemas as `tools=` to `ChatFormat.encode`. The model
 answers with `<tool_call><function=NAME><parameter=ARG>value</parameter>...</tool_call>`;

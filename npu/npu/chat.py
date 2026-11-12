@@ -1,25 +1,27 @@
 """Interactive chat with LFM3-1.7B on the NPU.
-usage: chat.py [--think] [--system "..."] [--max-new 512]
+usage: chat.py [--think] [--system "..."] [--max-new 512] [--runtime native|ort]
 Commands: /reset (new conversation), /quit. Greedy decoding with repetition penalty 1.1."""
 import argparse, sys, time
 from pathlib import Path
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from chat_format import ChatFormat, BUILD_DIR
-from lfm3_npu import LFM3NPU
+from runtime import load_model
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--think", action="store_true", help="enable the model's <think> reasoning")
 ap.add_argument("--system", default=None)
 ap.add_argument("--max-new", type=int, default=512)
 ap.add_argument("--build", default=str(BUILD_DIR))
+ap.add_argument("--runtime", choices=["native", "ort"], default=None,
+                help="native QNN runner (default when native/libqnnrun.so is built) or ONNX Runtime")
 a = ap.parse_args()
 
 cf = ChatFormat()
-m = LFM3NPU(a.build)
+m = load_model(a.build, a.runtime)
 eos = cf.stop_ids(m.man["eos"])
 ban = [] if a.think else [i for i in (cf.tok.token_to_id("<think>"), cf.tok.token_to_id("</think>")) if i is not None]
-print(f"LFM3-1.7B on the NPU (context {m.T}, loaded in {m.load_s:.1f}s). /reset, /quit", flush=True)
+print(f"LFM3-1.7B on the NPU ({type(m).__name__}, context {m.T}, loaded in {m.load_s:.1f}s). /reset, /quit", flush=True)
 msgs = [{"role": "system", "content": a.system}] if a.system else []
 hist = []                                     # token ids already in the model state
 

@@ -10,7 +10,7 @@ Tot el que he fet funcionar a la **Radxa Dragon Q6A** (Qualcomm QCS6490) amb Ubu
 | [`board/`](board) | Configuració general: acceleració de la GPU (Adreno 643), ajustos de CPU, xarxa, zram i escriptura a disc, i un monitor de la GPU (`gputop`). |
 | [`audio/`](audio) | Àudio: sortida d'auriculars a 24 bits (DKMS amb dues correccions del kernel), rutes del DSP que ja no es perden, un `alsamixer` que es pot fer servir i AirPlay 2 (shairport-sync) amb volum de maquinari. |
 | [`kodi-iris/`](kodi-iris) | Descodificació de vídeo per maquinari a Kodi amb el descodificador iris (V4L2 mem2mem, DRM PRIME), 4K amb EGL, i el rang de color HDMI amb el convertidor DP→HDMI RA620 de la placa. |
-| [`npu/`](npu) | LFM3-1.7B (Liquid AI) executant-se del tot a la NPU Hexagon HTP v68 amb `onnxruntime-qnn`, sense el SDK de Qualcomm. |
+| [`npu/`](npu) | LFM3-1.7B (Liquid AI) executant-se del tot a la NPU Hexagon HTP v68, sense el SDK de Qualcomm: grafs compilats amb `onnxruntime-qnn`, executats per un runner natiu de QNN (11,7 tok/s) o per ONNX Runtime. |
 
 Els arranjaments es fan des de la placa: mòduls del kernel, configuració i scripts, i no amb
 ajustos a la TV o al monitor. Els pedaços del kernel enviats als desenvolupadors del

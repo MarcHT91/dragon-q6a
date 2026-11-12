@@ -9,3 +9,5 @@ data/
 *_qnn.bin
 *.npz
 *.log
+native/qnn-headers/
+native/*.so

@@ -59,6 +59,16 @@ Limit the number of calls instead of the wall time, let the process exit normall
 reboot if `used` memory stays high after all NPU processes are gone. If you run the model
 as a service, limit automatic restarts (systemd `StartLimitBurst`).
 
+## One QNN runtime per process
+
+Loading the ONNX Runtime QNN sessions and the native runner (`lfm3_native.py`) in the same
+process maps every graph's weights twice. The DSP runs out of address space (`fastrpc memory
+map ... failed`, `Failed to map weights buffer to device!`, `Failed to find available PD`),
+and the process can end up as a zombie with threads stuck in QNN. The memory it had mapped
+(here ~2 GB) is not freed until a reboot, and later loads can fail for the same reason even
+in a clean process. Compare the two runtimes in separate processes (`test_native.py ort`,
+then `test_native.py native`). If loads fail after such an incident, reboot.
+
 ## Never read `/sys/kernel/debug/dma_buf/bufinfo`
 
 On kernel 7.2.9 reading it oopses in `dma_buf_debug_show` while holding the dma-buf list

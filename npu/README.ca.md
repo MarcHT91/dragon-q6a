@@ -4,18 +4,23 @@
 
 Executa **[LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B)** (Liquid AI) a la **NPU**
 de la **Radxa Dragon Q6A** (Qualcomm QCS6490, Hexagon HTP v68), tot a la NPU, sense l'SDK de
-Qualcomm i sense compte de Qualcomm.
+Qualcomm i sense compte de Qualcomm (el runner natiu opcional només necessita les capçaleres
+públiques de l'API de QNN, que el seu script de compilació descarrega del PPA públic de
+Qualcomm a Ubuntu).
 
 El model es reconstrueix a mà com a grafs ONNX quantitzats (pesos int4/int8, activacions
 de 16 bits) que el proveïdor d'execució QNN d'`onnxruntime-qnn` compila per a la HTP. Un
-petit bucle en Python a la CPU guarda les memòries cau de K/V i els estats de les
-convolucions, i crida els grafs token a token, o de 16 en 16 per al prompt.
+bucle a la CPU guarda les memòries cau de K/V i els estats de les convolucions, i crida els
+grafs token a token, o de 16 en 16 per al prompt. Hi ha dos runtimes per executar els grafs
+compilats: un **runner natiu** (C++ que crida directament l'API de QNN i guarda l'estat a
+memòria compartida amb la NPU; és el predeterminat) i ONNX Runtime. Tots dos donen sortides
+idèntiques bit a bit.
 
 | | |
 |---|---|
-| Generació | **7,8 tok/s** (context 4096), 8,9 tok/s (2048), 9,4 tok/s (1024) |
+| Generació | **11,7 tok/s** (context 4096, runtime natiu); ONNX Runtime: 7,8 tok/s (4096), 8,9 (2048), 9,4 (1024) |
 | Prefill | blocs de 16 tokens: ~130 tok/s en prompts curts, ~85 tok/s en un prompt de 2,8k tokens (context 4096) |
-| Càrrega | ~7-9 s (contextos compilats) |
+| Càrrega | ~2-4 s amb el runtime natiu, ~6-9 s amb ONNX Runtime (contextos compilats) |
 | Memòria | 2,1 GB de grafs compilats + 0,5 GB d'embedding, ~3,6 GB de RSS (context 4096) |
 | Qualitat respecte a fp32 | coincidència top-1 del 84,1%, KL mitjana 0,156 (teacher-forced) |
 | Bench de tasques | 36/36 tasques bàsiques (crides a eines, JSON, instruccions, coneixement, mates); 22/28 de difícils (fp32: ~26/28) |
@@ -26,7 +31,8 @@ Tot està mesurat a la placa. Detalls a [docs/RESULTS.md](docs/RESULTS.md).
 
 | Ruta | Què hi ha |
 |---|---|
-| `npu/` | Constructor de grafs, runtime de la NPU, quantització (GPTQ, calibratge, sensibilitat), avaluació, xat per terminal |
+| `npu/` | Constructor de grafs, runtimes de la NPU, quantització (GPTQ, calibratge, sensibilitat), avaluació, profiling, xat per terminal |
+| `native/` | Runner natiu de QNN (`qnnrun.cpp`, es compila amb `native/build.sh`) que fa servir el runtime natiu |
 | `configs/` | Rangs d'activació i llistes de matrius int8 del build de referència |
 | `experiments/` | AWQ + GPTQ (provat, no millora; es conserva com a referència) |
 | [docs/PIPELINE.md](docs/PIPELINE.md) | Pas a pas: del checkpoint de Hugging Face al model funcionant |
@@ -56,12 +62,18 @@ export INT8_LAYERS=0,1,2,3,4,5 INT8_MATS=configs/int8_mats_100M.json
 .venv/bin/python npu/build_all_lfm3.py models/LFM3-1.7B configs/lfm3_act_ranges.json build/gptq build/npu 4096 6
 .venv/bin/python npu/build_prefill_lfm3.py models/LFM3-1.7B configs/lfm3_act_ranges.json build/gptq build/npu 16
 
-# 4. executar
-.venv/bin/python npu/chat.py
+# 4. runner natiu (opcional, generació ~1,5x més ràpida; cal g++)
+native/build.sh
+
+# 5. executar
+.venv/bin/python npu/chat.py            # --runtime native|ort
 ```
 
-Per fer-lo servir des del teu codi, `npu/lfm3_npu.py` (`LFM3NPU`): `feed(ids)` retorna els
-logits després d'un prompt i `step(token)` genera un token.
+Per fer-lo servir des del teu codi, `load_model(build_dir)` de `npu/runtime.py` retorna el
+runtime natiu (`npu/lfm3_native.py`, `LFM3Native`) si `native/libqnnrun.so` està compilat, i si no
+el d'ONNX Runtime (`npu/lfm3_npu.py`, `LFM3NPU`); `LFM3_RUNTIME=native|ort` en força un. Tots dos
+tenen la mateixa interfície: `feed(ids)` retorna els logits després d'un prompt i `step(token)`
+genera un token.
 
 ## Requisits
 
@@ -71,7 +83,8 @@ logits després d'un prompt i `step(token)` genera un token.
 - L'usuari dins del grup `fastrpc` (`/dev/fastrpc-cdsp`).
 - Python 3.14 amb `onnxruntime==1.27.0` i `onnxruntime-qnn==2.3.0` (QNN 2.47). Les
   biblioteques de QNN per a la HTP, inclòs l'*skel* v68 que s'executa al DSP, venen dins el
-  wheel d'`onnxruntime-qnn`.
+  wheel d'`onnxruntime-qnn`. El runner natiu fa servir aquestes mateixes biblioteques; per
+  compilar-lo cal `g++`, `curl` i `dpkg-deb`.
 - Placa de ~12 GB de RAM: construir els grafs i executar el model hi caben. El model de
   referència fp32 (només per validar) necessita ~7 GB i va millor en un PC.
 - Opcional però recomanat: un PC x86-64 amb GPU NVIDIA (8 GB o més) per al GPTQ i
@@ -89,7 +102,10 @@ logits després d'un prompt i `step(token)` genera un token.
 - **Bucle a la CPU.** L'embedding, les memòries cau K/V (atenció completa: fins al
   context; finestra lliscant: un anell de 255 posicions), els estats de les convolucions, les
   taules de RoPE i les màscares viuen a la CPU, i entren i surten dels grafs com a tensors
-  uint16/uint8.
+  uint16/uint8. El runtime natiu els guarda tots en buffers rpcmem registrats una sola vegada
+  a QNN, de manera que no es copia res a cada token (ONNX Runtime copia ~53 MB d'estat als
+  buffers de QNN a cada token), i fa tot el pas de generació en C++. On va el temps:
+  [docs/RESULTS.md](docs/RESULTS.md#decode-profile).
 - **Limitacions de la v68.** No hi ha RMSNorm (es fa amb LpNorm × γ√N); les
   multiplicacions activació × activació de 16×16 bits perden precisió sense avisar (es
   parteixen en byte alt i baix); els pesos int4 per blocs donen resultats incorrectes (només
@@ -114,6 +130,9 @@ un ~1,5% de velocitat. Detalls a [docs/QUANTIZATION.md](docs/QUANTIZATION.md).
   i totes les sessions de la NPU fallen fins que es reinicia. Mantingues el model en un sol
   procés de llarga durada i evita molts processos curts seguits. Atura tots els processos de la NPU abans de reiniciar el CDSP. Com recuperar-ho:
   [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+- **Un sol runtime de QNN per procés.** No carreguis les sessions d'ONNX Runtime i el runner
+  natiu en el mateix procés: el DSP es queda sense espai d'adreces, el procés es pot penjar i
+  la memòria que tenia mapada es perd fins que reinicies.
 - **No llegeixis `/sys/kernel/debug/dma_buf/bufinfo`** amb aquest kernel: provoca un error
   intern (*oops*) i deixa bloquejats els dma-buf, i totes les sessions de la NPU posteriors
   es pengen fins que reinicies.

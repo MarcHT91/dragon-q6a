@@ -1,18 +1,18 @@
 """One-process validation of an LFM3 NPU build: first-token p(<tool_call>) on the bench tool prompts (high for the
 first 7, low for the last 3), decode speed, and teacher-forced top-1 / KL against fp32 logits (make_eval_ref.py).
-usage: validate_build.py [BUILD_DIR] [EVAL_DIR]"""
+usage: validate_build.py [BUILD_DIR] [EVAL_DIR]   (runtime: LFM3_RUNTIME=native|ort)"""
 import sys, json, time
 from pathlib import Path
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from chat_format import ChatFormat, BUILD_DIR, ROOT
 from bench import TASKS, TOOLS, messages
-from lfm3_npu import LFM3NPU
+from runtime import load_model
 
 B = Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD_DIR
 E = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "build" / "eval"
 cf = ChatFormat(); TC = cf.tok.token_to_id("<tool_call>")
-m = LFM3NPU(B)
+m = load_model(B)          # LFM3_RUNTIME=native|ort
 ps = []
 for c, q, _ in TASKS:
     if c != "tool":

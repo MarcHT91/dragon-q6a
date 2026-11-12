@@ -315,8 +315,8 @@ def main():
             print(cat, len(cf.encode(msgs, TOOLS if tools else None, think)))
         return
     if back == "lfm3-npu":
-        from lfm3_npu import LFM3NPU
-        m = LFM3NPU(BUILD_DIR); eos = cf.stop_ids(m.man["eos"]); ctx = m.T
+        from runtime import load_model          # LFM3_RUNTIME=native|ort
+        m = load_model(BUILD_DIR); eos = cf.stop_ids(m.man["eos"]); ctx = m.T
         def start(ids):
             m.reset(); return m.logits_f32(m.feed(ids))
         nxt = lambda t: m.logits_f32(m.step(t))

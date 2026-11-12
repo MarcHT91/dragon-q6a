@@ -4,18 +4,21 @@
 
 Run **[LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B)** (Liquid AI) on the **NPU** of the
 **Radxa Dragon Q6A** (Qualcomm QCS6490, Hexagon HTP v68), entirely on the NPU, with no
-Qualcomm SDK and no Qualcomm account.
+Qualcomm SDK and no Qualcomm account (the optional native runner only needs the public QNN
+API headers, which its build script downloads from Ubuntu's public Qualcomm PPA).
 
 The model is rebuilt by hand as quantized ONNX graphs (int4/int8 weights, 16-bit
 activations) that the QNN execution provider of `onnxruntime-qnn` compiles for the HTP. A
-small Python host loop keeps the KV caches and convolution states and calls the graphs
-token by token, or 16 tokens at a time for the prompt.
+host loop keeps the KV caches and convolution states and calls the graphs token by token,
+or 16 tokens at a time for the prompt. Two runtimes run the compiled graphs: a **native
+runner** (C++ calling the QNN API directly, state kept in shared NPU memory; the default) and
+ONNX Runtime. Both give bit-identical outputs.
 
 | | |
 |---|---|
-| Decode | **7.8 tok/s** (4096 context), 8.9 tok/s (2048), 9.4 tok/s (1024) |
+| Decode | **11.7 tok/s** (4096 context, native runtime); ONNX Runtime: 7.8 tok/s (4096), 8.9 (2048), 9.4 (1024) |
 | Prefill | chunks of 16 tokens: ~130 tok/s on short prompts, ~85 tok/s on a 2.8k-token prompt (4096 context) |
-| Load time | ~7-9 s (compiled contexts) |
+| Load time | ~2-4 s native, ~6-9 s ONNX Runtime (compiled contexts) |
 | Memory | 2.1 GB of compiled graphs + 0.5 GB embedding, ~3.6 GB process RSS (4096 context) |
 | Quality vs fp32 | top-1 agreement 84.1%, mean KL 0.156 (teacher-forced) |
 | Task bench | 36/36 basic tasks (tool calls, JSON, instructions, knowledge, math); 22/28 hard tasks (fp32: ~26/28) |
@@ -26,7 +29,8 @@ Everything here was measured on the board. Details in [docs/RESULTS.md](docs/RES
 
 | Path | What |
 |---|---|
-| `npu/` | Graph builder, NPU runtime, quantization (GPTQ, calibration, sensitivity), evaluation, chat CLI |
+| `npu/` | Graph builder, NPU runtimes, quantization (GPTQ, calibration, sensitivity), evaluation, profiling, chat CLI |
+| `native/` | Native QNN runner (`qnnrun.cpp`, built by `native/build.sh`) used by the native runtime |
 | `configs/` | Activation ranges and int8 matrix lists used for the reference build |
 | `experiments/` | AWQ + GPTQ (tried, did not help; kept for reference) |
 | [docs/PIPELINE.md](docs/PIPELINE.md) | Step by step: from the Hugging Face checkpoint to a running model |
@@ -56,11 +60,16 @@ export INT8_LAYERS=0,1,2,3,4,5 INT8_MATS=configs/int8_mats_100M.json
 .venv/bin/python npu/build_all_lfm3.py models/LFM3-1.7B configs/lfm3_act_ranges.json build/gptq build/npu 4096 6
 .venv/bin/python npu/build_prefill_lfm3.py models/LFM3-1.7B configs/lfm3_act_ranges.json build/gptq build/npu 16
 
-# 4. run
-.venv/bin/python npu/chat.py
+# 4. native runner (optional, ~1.5x faster decode; needs g++)
+native/build.sh
+
+# 5. run
+.venv/bin/python npu/chat.py            # --runtime native|ort
 ```
 
-`npu/lfm3_npu.py` (`LFM3NPU`) is the runtime to use from your own code:
+From your own code, `npu/runtime.py` `load_model(build_dir)` returns the native runtime
+(`npu/lfm3_native.py`, `LFM3Native`) when `native/libqnnrun.so` is built, otherwise the ONNX Runtime one
+(`npu/lfm3_npu.py`, `LFM3NPU`); `LFM3_RUNTIME=native|ort` forces one. Both have the same interface:
 `feed(token_ids)` returns the logits after a prompt, `step(token)` decodes one token.
 
 ## Requirements
@@ -71,7 +80,8 @@ export INT8_LAYERS=0,1,2,3,4,5 INT8_MATS=configs/int8_mats_100M.json
 - Your user in the `fastrpc` group (`/dev/fastrpc-cdsp`).
 - Python 3.14 with `onnxruntime==1.27.0` and `onnxruntime-qnn==2.3.0` (QNN 2.47). The QNN
   HTP libraries, including the v68 skeleton that runs on the DSP, come inside the
-  `onnxruntime-qnn` wheel.
+  `onnxruntime-qnn` wheel. The native runner uses those same libraries; building it needs
+  `g++`, `curl` and `dpkg-deb`.
 - ~12 GB RAM board: building graphs and running the model fit. The fp32 reference model
   (only for validation) needs ~7 GB and is better run on a PC.
 - Optional but recommended: an x86-64 PC with an NVIDIA GPU (8 GB+) for GPTQ and
@@ -87,7 +97,10 @@ export INT8_LAYERS=0,1,2,3,4,5 INT8_MATS=configs/int8_mats_100M.json
   (GPTQ). The first 6 layers and 26 sensitive matrices use int8 (see below).
 - **Host loop.** The embedding lookup, KV caches (full attention: up to the context;
   sliding: a 255-slot ring), convolution states, RoPE tables and masks live on the host and
-  are passed in and out as uint16/uint8 tensors.
+  are passed in and out as uint16/uint8 tensors. The native runtime keeps all of them in
+  rpcmem buffers registered once with QNN, so nothing is copied per token (ONNX Runtime copies
+  ~53 MB of state into QNN's buffers on every token), and runs the whole decode step in C++.
+  Where the time goes: [docs/RESULTS.md](docs/RESULTS.md#decode-profile).
 - **v68 workarounds.** No RMSNorm op (LpNorm × γ√N instead), 16×16-bit activation matmuls
   silently lose precision (split into hi/lo bytes), block-int4 weights give wrong results
   (per-channel only). See [docs/HTP_V68.md](docs/HTP_V68.md).
@@ -110,6 +123,9 @@ Details in [docs/QUANTIZATION.md](docs/QUANTIZATION.md).
   After several of these the CDSP stops responding and every NPU session fails until the
   CDSP is restarted. Keep the model in one long-lived process and avoid many short NPU
   processes in a row. Stop all NPU processes before restarting the CDSP. Recovery steps are in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+- **One QNN runtime per process.** Do not load the ONNX Runtime sessions and the native
+  runner in the same process: the DSP runs out of address space, the process can hang, and
+  the memory it had mapped stays lost until a reboot.
 - **Do not read `/sys/kernel/debug/dma_buf/bufinfo`** on this kernel: it oopses and leaves
   the dma-buf lock held, so every later NPU session hangs until a reboot.
 

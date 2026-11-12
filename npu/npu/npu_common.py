@@ -51,6 +51,9 @@ def npu_session(model_path, ctx_path=None, perf="burst", opt_mode="3"):
         o.add_session_config_entry("ep.context_enable", "1")
         o.add_session_config_entry("ep.context_embed_mode", "0")
         o.add_session_config_entry("ep.context_file_path", str(ctx_path))
+    if os.environ.get("QNN_PROF"):          # QNN profiling (basic|detailed) -> one CSV per session, see prof_decode.py
+        po["profiling_level"] = os.environ["QNN_PROF"]
+        po["profiling_file_path"] = os.path.join(os.environ.get("QNN_PROF_DIR", "/tmp"), Path(src).stem + ".csv")
     if OFFLINE or os.environ.get("NO_COMPILE") == "1":
         if os.environ.get("NO_COMPILE") == "1" or src == ctx_path:
             return None, 0.0
