@@ -2,6 +2,7 @@
 Each runtime must run in its own process (two QNN runtimes in one process exhaust the DSP address space):
   python npu/test_native.py ort    [BUILD_DIR] [N]   # writes build/native_ref.npz
   python npu/test_native.py native [BUILD_DIR] [N]   # compares with it
+Add --long to use a ~700-token prompt (45 prefill chunks; the 255-slot sliding window wraps around).
 """
 import sys, time
 from pathlib import Path
@@ -10,13 +11,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from chat_format import ChatFormat, BUILD_DIR, ROOT
 from runtime import load_model
 
+long = "--long" in sys.argv
+sys.argv = [a for a in sys.argv if a != "--long"]
 mode = sys.argv[1] if len(sys.argv) > 1 else "native"
 bd = sys.argv[2] if len(sys.argv) > 2 else str(BUILD_DIR)
 n_new = int(sys.argv[3]) if len(sys.argv) > 3 else 40
-ref = ROOT / "build" / "native_ref.npz"
+ref = ROOT / "build" / ("native_ref_long.npz" if long else "native_ref.npz")
 cf = ChatFormat()
-ids = cf.encode([{"role": "user", "content": "Explain in a few sentences why the sky is blue, and mention Rayleigh "
-                  "scattering. Then list three colors of a sunset."}])
+text = ("Explain in a few sentences why the sky is blue, and mention Rayleigh scattering. "
+        "Then list three colors of a sunset.")
+if long:
+    text = " ".join(f"Note {i}: the sky over the harbour changed colour {i % 7 + 2} times before noon." for i in range(40)) \
+        + " Now, ignoring the notes above: " + text
+ids = cf.encode([{"role": "user", "content": text}])
 
 m = load_model(bd, mode)
 t0 = time.time(); lq = m.feed(ids); t1 = time.time()

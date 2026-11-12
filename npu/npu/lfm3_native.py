@@ -6,7 +6,8 @@ Same interface as LFM3NPU (feed / step / reset / st / logits_f32 / generate) and
   copied per token (ORT copies it into QNN's buffers on every run);
 - decode and prefill graphs share the same state buffers (registered in both QNN contexts);
 - the whole decode step (embedding quantization, RoPE rows, masks, KV slot update, conv state, graph chaining,
-  head) runs in C++ (lf_step). Set LFM3_PY_STEP=1 to use the equivalent numpy step instead.
+  head) runs in C++ (lf_step), and so does a prefill chunk (lf_prefill). Set LFM3_PY_STEP=1 to use the
+  equivalent numpy code instead.
 Outputs are bit-identical to LFM3NPU (test_native.py)."""
 import json, time, sys, os
 from pathlib import Path
@@ -57,11 +58,11 @@ class LFM3Native:
         self.reset()
 
     def _setup_fast(self):
-        """Hand the per-token host work to C++ (qnnrun lf_step)."""
+        """Hand the per-token (lf_step) and per-chunk (lf_prefill) host work to C++."""
         import ctypes as C
         lib = qnnrun.lib()
         def scale_of(name):
-            sc = {G.inputs[name].scale for _, G in self.graphs if name in G.inputs}
+            sc = {G.inputs[name].scale for _, G in self.graphs + self.pre if name in G.inputs}   # decode + prefill share the tables
             assert len(sc) == 1, (name, sc)
             return sc.pop()
         tabs = []
@@ -79,7 +80,7 @@ class LFM3Native:
         lib.lf_set_model(ptr(self._embed_c), self.hid, self.T, self.TS, self.KV, self.D,
                          ptr(tabs[0]), ptr(tabs[1]), ptr(tabs[2]), ptr(tabs[3]),
                          H.g, H.inputs["x"].idx, H.outputs["logits"].idx)
-        for g, G in self.graphs:
+        def plan(g, G):
             I, O = G.inputs, G.outputs
             idx = lambda d, n: d[n].idx if n in d else -1
             mz = lambda n: int(q16(0.0, I[n].scale)) if n in I else 0
@@ -94,7 +95,13 @@ class LFM3Native:
                     lay += [1 if self.types[i] == "full_attention" else 2, -1, -1,
                             I[f"past_kh{i}"].idx, I[f"past_kl{i}"].idx, I[f"past_vh{i}"].idx, I[f"past_vl{i}"].idx,
                             O[f"k_new{i}"].idx, O[f"v_new{i}"].idx]
-            lib.lf_add_graph(G.g, (C.c_int * len(io))(*io), len(g["layers"]), (C.c_int * len(lay))(*lay))
+            return G.g, (C.c_int * len(io))(*io), len(g["layers"]), (C.c_int * len(lay))(*lay)
+        for g, G in self.graphs:
+            lib.lf_add_graph(*plan(g, G))
+        if self.pre:
+            lib.lf_set_prefill(self.C, self.c["num_attention_heads"] // self.KV, self.c["sliding_window"])
+            for g, P in self.pre:
+                lib.lf_add_prefill_graph(*plan(g, P))
         self._nvocab = H.outputs["logits"].a.size
 
     # --- persistent state: dict layer -> view(s) into the rpcmem buffers (same layout as LFM3NPU.st) ---
@@ -199,6 +206,13 @@ class LFM3Native:
         """Feed exactly C tokens at positions pos..pos+C-1 through the prefill graphs (no logits)."""
         C, p = self.C, self.pos
         assert len(tokens) == C and p + C <= self.T
+        if self.fast:
+            import ctypes
+            tk = np.ascontiguousarray(tokens, np.int32)
+            if qnnrun.lib().lf_prefill(tk.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), p):
+                raise RuntimeError("lf_prefill failed")
+            self.pos += C
+            return
         rep = self.c["num_attention_heads"] // self.KV
         win = self.c["sliding_window"]
         def rope_rows(typ):

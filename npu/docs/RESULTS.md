@@ -12,7 +12,11 @@ onnxruntime-qnn 2.3.0. Reference build: GPTQ int4, int8 layers 0-5, 26 int8 matr
 | 2048 | | 8.9 tok/s | |
 | 4096 | **11.7 tok/s** | 7.8 tok/s | native: logits bit-identical to ONNX Runtime (`test_native.py`) |
 
-Prefill (16-token chunks): ~130 tok/s on prompts of a few hundred tokens (1024 context);
+Prefill (16-token chunks), 723-token prompt at 4096 context (`test_native.py --long`): 4.83 s
+(150 tok/s) native, 7.72 s (94 tok/s) ONNX Runtime, logits bit-identical. A chunk is ~93 ms on
+the HTP; with the numpy host code the native runtime spent another ~65 ms per chunk building
+masks and storing K/V (7.14 s), which `lf_prefill` in C++ removes.
+ONNX Runtime, earlier measurements: ~130 tok/s on prompts of a few hundred tokens (1024 context);
 a 2.8k-token prompt takes 33 s at 4096 context (~85 tok/s). Reusing a saved model state
 for a repeated prompt prefix (system prompt, tool schemas) avoids most of that.
 Loading the compiled contexts: 2-4 s (native runtime), 6-9 s (ONNX Runtime). A 36-token
@@ -39,7 +43,8 @@ activation × activation (hi/lo split, always over the whole context, whatever t
 
 The native runtime removes the last three rows: graph I/O lives in rpcmem buffers registered
 once with QNN (the KV cache is updated in place, nothing is copied per token), decode and
-prefill graphs share those buffers, and the host work of a step runs in C++. What is left is
+prefill graphs share those buffers, and the host work of a decode step and of a prefill chunk
+runs in C++. What is left is
 ~83 ms on the HTP + ~3 ms on the host (85.6 ms/token, 11.7 tok/s). Remaining levers are on
 the HTP: the LM head (int4 or a vocabulary shortlist, ~6-7 ms) and the int8 weights of graph 0.
 

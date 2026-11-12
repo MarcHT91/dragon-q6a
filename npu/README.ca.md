@@ -19,7 +19,7 @@ idèntiques bit a bit.
 | | |
 |---|---|
 | Generació | **11,7 tok/s** (context 4096, runtime natiu); ONNX Runtime: 7,8 tok/s (4096), 8,9 (2048), 9,4 (1024) |
-| Prefill | blocs de 16 tokens: ~130 tok/s en prompts curts, ~85 tok/s en un prompt de 2,8k tokens (context 4096) |
+| Prefill | blocs de 16 tokens, context 4096: **150 tok/s** en un prompt de 723 tokens amb el runtime natiu (ONNX Runtime: 94 tok/s; ~85 tok/s en un prompt de 2,8k tokens) |
 | Càrrega | ~2-4 s amb el runtime natiu, ~6-9 s amb ONNX Runtime (contextos compilats) |
 | Memòria | 2,1 GB de grafs compilats + 0,5 GB d'embedding, ~3,6 GB de RSS (context 4096) |
 | Qualitat respecte a fp32 | coincidència top-1 del 84,1%, KL mitjana 0,156 (teacher-forced) |

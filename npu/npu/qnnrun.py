@@ -41,6 +41,9 @@ def _load():
     L.lf_set_model.argtypes = [C.c_void_p, C.c_int, C.c_int, C.c_int, C.c_int, C.c_int,
                                C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_int]
     L.lf_add_graph.argtypes = [C.c_int, C.POINTER(C.c_int), C.c_int, C.POINTER(C.c_int)]
+    L.lf_set_prefill.argtypes = [C.c_int, C.c_int, C.c_int]
+    L.lf_add_prefill_graph.argtypes = [C.c_int, C.POINTER(C.c_int), C.c_int, C.POINTER(C.c_int)]
+    L.lf_prefill.argtypes = [C.POINTER(C.c_int), C.c_int]
     L.lf_step.argtypes = [C.c_int, C.c_int]
     L.lf_step.restype = C.c_void_p
     _lib = L

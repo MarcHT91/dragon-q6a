@@ -17,7 +17,7 @@ ONNX Runtime. Both give bit-identical outputs.
 | | |
 |---|---|
 | Decode | **11.7 tok/s** (4096 context, native runtime); ONNX Runtime: 7.8 tok/s (4096), 8.9 (2048), 9.4 (1024) |
-| Prefill | chunks of 16 tokens: ~130 tok/s on short prompts, ~85 tok/s on a 2.8k-token prompt (4096 context) |
+| Prefill | chunks of 16 tokens, 4096 context: **150 tok/s** on a 723-token prompt with the native runtime (ONNX Runtime: 94 tok/s; ~85 tok/s on a 2.8k-token prompt) |
 | Load time | ~2-4 s native, ~6-9 s ONNX Runtime (compiled contexts) |
 | Memory | 2.1 GB of compiled graphs + 0.5 GB embedding, ~3.6 GB process RSS (4096 context) |
 | Quality vs fp32 | top-1 agreement 84.1%, mean KL 0.156 (teacher-forced) |

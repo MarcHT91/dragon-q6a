@@ -213,7 +213,8 @@ struct GraphPlan {
     uint16_t mask_zero_f, mask_neg_f, mask_zero_s, mask_neg_s;
     std::vector<LayerPlan> layers;
 };
-static std::vector<GraphPlan> plans;
+static std::vector<GraphPlan> plans, pre_plans;      // decode graphs, prefill graphs (C tokens per call)
+static int lf_C = 0, lf_rep = 1, lf_win = 0;
 static const __fp16* lf_embed = nullptr;
 static int lf_hid = 0, lf_T = 0, lf_TS = 0, lf_KV = 0, lf_D = 0, lf_head = -1, lf_head_x = -1, lf_head_logits = -1;
 static const uint16_t *rope_cf, *rope_sf, *rope_cs, *rope_ss;   // [T][D] q16 tables
@@ -235,7 +236,7 @@ int lf_set_model(const void* embed, int hid, int T, int TS, int KV, int D,
 
 // io: x, cos_f, sin_f, mask_f, cos_s, sin_s, mask_s, x_out, mask_zero_f, mask_neg_f, mask_zero_s, mask_neg_s (-1 = absent)
 // layers: nlayers x 9 ints (type, in_state, out_state, in_kh, in_kl, in_vh, in_vl, out_k, out_v)
-int lf_add_graph(int g, const int* io, int nlayers, const int* layers) {
+static GraphPlan make_plan(int g, const int* io, int nlayers, const int* layers) {
     GraphPlan P;
     P.g = g; P.x = io[0]; P.cos_f = io[1]; P.sin_f = io[2]; P.mask_f = io[3]; P.cos_s = io[4]; P.sin_s = io[5]; P.mask_s = io[6]; P.x_out = io[7];
     P.mask_zero_f = (uint16_t)io[8]; P.mask_neg_f = (uint16_t)io[9]; P.mask_zero_s = (uint16_t)io[10]; P.mask_neg_s = (uint16_t)io[11];
@@ -243,7 +244,23 @@ int lf_add_graph(int g, const int* io, int nlayers, const int* layers) {
         const int* L = layers + 9 * i;
         P.layers.push_back({L[0], L[1], L[2], L[3], L[4], L[5], L[6], L[7], L[8]});
     }
-    plans.push_back(P);
+    return P;
+}
+
+int lf_add_graph(int g, const int* io, int nlayers, const int* layers) {
+    plans.push_back(make_plan(g, io, nlayers, layers));
+    return 0;
+}
+
+// Prefill graphs: C tokens per call, rep = attention heads per KV head (mask rows are tiled rep times),
+// win = sliding window. io/layers as in lf_add_graph; their state inputs must share the decode buffers.
+int lf_set_prefill(int C, int rep, int win) {
+    lf_C = C; lf_rep = rep; lf_win = win; pre_plans.clear();
+    return 0;
+}
+
+int lf_add_prefill_graph(int g, const int* io, int nlayers, const int* layers) {
+    pre_plans.push_back(make_plan(g, io, nlayers, layers));
     return 0;
 }
 
@@ -259,10 +276,12 @@ static float tensor_scale(Qnn_Tensor_t& t) {
     return v.quantizeParams.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET ? v.quantizeParams.scaleOffsetEncoding.scale : 1.f;
 }
 
+static void store_kv(Graph& G, const LayerPlan& L, int pos, int n);
+
 // One decode step at position pos. Returns a pointer to the head's uint16 logits buffer (valid until the next call).
 const uint16_t* lf_step(int token, int pos) {
     if (pos >= lf_T) { LOGE("context full"); return nullptr; }
-    const int D = lf_D, KV = lf_KV, hid = lf_hid;
+    const int D = lf_D, hid = lf_hid;
     const uint16_t* prev = nullptr;
     for (size_t gi = 0; gi < plans.size(); gi++) {
         GraphPlan& P = plans[gi];
@@ -295,20 +314,7 @@ const uint16_t* lf_step(int token, int pos) {
             if (L.type == 0) {
                 memcpy(G.inb[L.in_state].ptr, G.outb[L.out_state].ptr, G.inb[L.in_state].bytes);
             } else {
-                const int N = L.type == 1 ? lf_T : lf_TS;
-                const int slot = L.type == 1 ? pos : pos % lf_TS;
-                const uint16_t* kn = (const uint16_t*)G.outb[L.out_k].ptr;   // [KV,1,D]
-                const uint16_t* vn = (const uint16_t*)G.outb[L.out_v].ptr;
-                uint8_t* kh = (uint8_t*)G.inb[L.in_kh].ptr; uint8_t* kl = (uint8_t*)G.inb[L.in_kl].ptr;   // [KV,D,N]
-                uint8_t* vh = (uint8_t*)G.inb[L.in_vh].ptr; uint8_t* vl = (uint8_t*)G.inb[L.in_vl].ptr;   // [KV,N,D]
-                for (int h = 0; h < KV; h++)
-                    for (int d = 0; d < D; d++) {
-                        uint8_t a, b;
-                        split16(kn[h * D + d], a, b);
-                        size_t ik = ((size_t)h * D + d) * N + slot; kh[ik] = a; kl[ik] = b;
-                        split16(vn[h * D + d], a, b);
-                        size_t iv = ((size_t)h * N + slot) * D + d; vh[iv] = a; vl[iv] = b;
-                    }
+                store_kv(G, L, pos, 1);
             }
         }
         prev = (const uint16_t*)G.outb[P.x_out].ptr;
@@ -317,6 +323,85 @@ const uint16_t* lf_step(int token, int pos) {
     memcpy(H.inb[lf_head_x].ptr, prev, hid * sizeof(uint16_t));
     if (qr_execute(lf_head)) return nullptr;
     return (const uint16_t*)H.outb[lf_head_logits].ptr;
+}
+
+// Store the new K/V rows (positions pos..pos+n-1, uint16 [KV,n,D]) as hi/lo bytes in their cache slots.
+static void store_kv(Graph& G, const LayerPlan& L, int pos, int n) {
+    const int D = lf_D, KV = lf_KV;
+    const int N = L.type == 1 ? lf_T : lf_TS;
+    const uint16_t* kn = (const uint16_t*)G.outb[L.out_k].ptr;
+    const uint16_t* vn = (const uint16_t*)G.outb[L.out_v].ptr;
+    uint8_t* kh = (uint8_t*)G.inb[L.in_kh].ptr; uint8_t* kl = (uint8_t*)G.inb[L.in_kl].ptr;   // [KV,D,N]
+    uint8_t* vh = (uint8_t*)G.inb[L.in_vh].ptr; uint8_t* vl = (uint8_t*)G.inb[L.in_vl].ptr;   // [KV,N,D]
+    for (int t = 0; t < n; t++) {
+        const int slot = L.type == 1 ? pos + t : (pos + t) % lf_TS;
+        for (int h = 0; h < KV; h++)
+            for (int d = 0; d < D; d++) {
+                uint8_t a, b;
+                const size_t io = ((size_t)h * n + t) * D + d;
+                split16(kn[io], a, b);
+                size_t ik = ((size_t)h * D + d) * N + slot; kh[ik] = a; kl[ik] = b;
+                split16(vn[io], a, b);
+                size_t iv = ((size_t)h * N + slot) * D + d; vh[iv] = a; vl[iv] = b;
+            }
+    }
+}
+
+// One prefill chunk: tokens[0..C) at positions pos..pos+C-1 (no logits). Same host work as the numpy version.
+int lf_prefill(const int* tokens, int pos) {
+    const int C = lf_C, D = lf_D, hid = lf_hid, T = lf_T, TS = lf_TS;
+    if (!C || pre_plans.empty()) { LOGE("prefill not configured"); return -1; }
+    if (pos + C > T) { LOGE("context full"); return -1; }
+    const uint16_t* prev = nullptr;
+    std::vector<uint16_t> row;
+    for (size_t gi = 0; gi < pre_plans.size(); gi++) {
+        GraphPlan& P = pre_plans[gi];
+        Graph& G = graphs[P.g];
+        uint16_t* x = (uint16_t*)G.inb[P.x].ptr;                 // [C, hid]
+        if (gi == 0) {
+            float s = tensor_scale(G.in[P.x]);
+            for (int t = 0; t < C; t++) {
+                const __fp16* e = lf_embed + (size_t)tokens[t] * hid;
+                for (int i = 0; i < hid; i++) x[(size_t)t * hid + i] = q16f((float)e[i], s);
+            }
+        } else {
+            memcpy(x, prev, (size_t)C * hid * sizeof(uint16_t));
+        }
+        if (P.cos_f >= 0) { memcpy(G.inb[P.cos_f].ptr, rope_cf + (size_t)pos * D, (size_t)C * D * 2); memcpy(G.inb[P.sin_f].ptr, rope_sf + (size_t)pos * D, (size_t)C * D * 2); }
+        if (P.cos_s >= 0) { memcpy(G.inb[P.cos_s].ptr, rope_cs + (size_t)pos * D, (size_t)C * D * 2); memcpy(G.inb[P.sin_s].ptr, rope_ss + (size_t)pos * D, (size_t)C * D * 2); }
+        if (P.mask_f >= 0) {                                       // [rep*C, T+C]: row r*C+t is the row of token t
+            uint16_t* m = (uint16_t*)G.inb[P.mask_f].ptr;
+            const int W = T + C;
+            row.resize(W);
+            for (int t = 0; t < C; t++) {
+                for (int i = 0; i < W; i++) row[i] = P.mask_neg_f;
+                for (int i = 0; i < pos; i++) row[i] = P.mask_zero_f;
+                for (int i = T; i <= T + t; i++) row[i] = P.mask_zero_f;
+                for (int r = 0; r < lf_rep; r++) memcpy(m + ((size_t)r * C + t) * W, row.data(), W * 2);
+            }
+        }
+        if (P.mask_s >= 0) {                                       // [rep*C, TS+C]
+            uint16_t* m = (uint16_t*)G.inb[P.mask_s].ptr;
+            const int W = TS + C;
+            row.resize(W);
+            for (int t = 0; t < C; t++) {
+                for (int i = 0; i < W; i++) row[i] = P.mask_neg_s;
+                for (int sl = 0; sl < TS && sl < pos; sl++) {
+                    const long q = sl + (long)TS * ((pos - 1 - sl) / TS);   // last position < pos stored in slot sl
+                    if (q > (long)pos + t - lf_win) row[sl] = P.mask_zero_s;
+                }
+                for (int i = TS; i <= TS + t; i++) row[i] = P.mask_zero_s;
+                for (int r = 0; r < lf_rep; r++) memcpy(m + ((size_t)r * C + t) * W, row.data(), W * 2);
+            }
+        }
+        if (qr_execute(P.g)) return -1;
+        for (auto& L : P.layers) {
+            if (L.type == 0) memcpy(G.inb[L.in_state].ptr, G.outb[L.out_state].ptr, G.inb[L.in_state].bytes);
+            else store_kv(G, L, pos, C);
+        }
+        prev = (const uint16_t*)G.outb[P.x_out].ptr;
+    }
+    return 0;
 }
 
 void qr_shutdown() {
