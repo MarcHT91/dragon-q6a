@@ -25,7 +25,7 @@ before being used.
 | Pattern | Status |
 |---|---|
 | Elementwise Mul/Add/Sub, ReduceSum, Sigmoid, SiLU, Softmax, Concat, Split, Reshape, Transpose at uint16 | precise (~1e-4) |
-| MatMul activation × weight (u16 × int4/int8) | precise |
+| MatMul activation × weight (u16 × int4/int8) | precise inputs, but the **u16 output carries ~12 bits** (errors of up to ~16 LSB) |
 | MatMul activation × activation (u16 × u16) | **the second operand is silently reduced to 8 bits** (~4.9% error) |
 | SimplifiedLayerNormalization (RMSNorm) | **not supported** |
 | LpNormalization (p=2) | supported |
@@ -41,6 +41,17 @@ scheme with no extra work per token.
 **RMSNorm.** `RMSNorm(x)·γ = LpNorm₂(x) · γ·√N` (ignoring eps). When eps matters (small
 vectors, eps 1e-5), append a constant `c = √(N·eps)` to the vector before the LpNorm and
 drop it afterwards; this is exact.
+
+**MatMul output precision and per-token rescaling.** A W8A16 MatMul whose output typically uses only a few
+dozen of its 32767 levels (the range is set by rare large tokens) comes out up to ~12% off: e.g. the output
+projection of a block, just before LFM3's post-operator RMSNorm, which then amplifies the error. Narrowing that
+output's range fixes it locally, but clipping the outliers globally makes the model worse. The fix used for d1
+(`PT_NORM=1` in `build_lfm3.py`, ranges from a calibration with `PT_NORM=1`): feed the projection `u / r` with
+`r = ||[u, d]||` per token (an LpNorm with an appended constant `d`), so every token's output has about the same
+size; the following RMSNorm is invariant to that per-token scale, and its eps becomes a per-token column
+`√(N·eps)/r` taken from the same LpNorm. The result is exact in real arithmetic. One layer: 16.5% → 3.0% error
+vs fp32 on the NPU; d1-2B (all int8 weights): answers moved 4x less. LFM3-1.7B (int4 weights dominate): KL
+0.156 → 0.136, not enabled by default.
 
 **In-chunk attention for prefill.** For the 16 new tokens of a prefill chunk, the
 attention among themselves uses elementwise Mul + ReduceSum instead of MatMul, to avoid the

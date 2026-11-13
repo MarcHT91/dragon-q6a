@@ -69,6 +69,10 @@ la diferència entre drivers ve del compilador de shaders (ir3 contra el de Qual
   386 a 190 ms amb 1024 patches, i l'encoder sencer va un ~35% més ràpid. Suma en fp16 (error relatiu
   de l'1-2% a 512 px); sumar en fp32 queda pendent.
 - Exportar l'atenció com a SDPA va 2 vegades més lent que MatMul + Softmax explícits.
+- **Desbordament fp16 a les reduccions amb entrades no quadrades.** Amb aritmètica fp16, la `mean(x²)` de les
+  normes (capa `Reduction` de ncnn) desbordava per a alguns tokens a 384x512 (NaN a tot el que ve després), mai a
+  les mides quadrades provades abans. `vl/encoder/vl_enc.py` marca les capes Reduction, MatMul, Softmax i BinaryOp
+  perquè calculin en fp32 (featmask `31=1` de ncnn) amb emmagatzematge fp16: sense NaN i a la mateixa velocitat.
 
 ### llama.cpp
 

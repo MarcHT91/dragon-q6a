@@ -56,6 +56,7 @@ the HTP: the LM head (int4 or a vocabulary shortlist, ~6-7 ms) and the int8 weig
 | GPTQ int4 everywhere (wikitext + chat calibration) | 0.821 | 0.294 |
 | + int8 layers 0-5 | 0.841 | 0.188 |
 | + 26 int8 matrices (reference build) | 0.841 | 0.156 |
+| + per-token rescaled projections (`PT_NORM=1`, [HTP_V68.md](HTP_V68.md); not the default) | 0.838 | 0.136 |
 
 ## Task benchmark (`bench.py`, greedy, no thinking)
 

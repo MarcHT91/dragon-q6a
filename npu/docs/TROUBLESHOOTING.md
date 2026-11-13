@@ -49,6 +49,31 @@ stays in `deactivating` or a process is stuck in state `D`, reboot.
 `dmesg` may be restricted for normal users; `sudo sysctl kernel.dmesg_restrict=0` makes it
 readable.
 
+## Large contexts fail to load: `fastrpc_mmap ... Cannot allocate memory` (qr_load -5)
+
+If the first big context (e.g. the 263 MB LM head) fails to load even right after a boot, check
+`/dev/dma_heap/system`: it must be readable and writable by the `fastrpc` group. Without it the fastrpc library
+logs `Unable to open /dev/dma_heap/system, falling back to fastrpc ioctl` and large buffers cannot be mapped.
+The udev rule shipped with fastrpc uses `setfacl`, which is missing unless the `acl` package is installed. A
+direct rule works without it:
+
+```
+# /etc/udev/rules.d/62-dma-heap.rules
+SUBSYSTEM=="dma_heap", KERNEL=="system", GROUP="fastrpc", MODE="0660"
+```
+
+## The same error after many NPU processes
+
+Each NPU process that starts and exits can leave some DSP memory behind; after ~10-15 processes in one boot the
+loads fail as above. Keep the model in one long-lived process (a service, an interactive session), and when it
+happens restart the CDSP with every NPU process stopped:
+
+```
+echo stop | sudo tee /sys/class/remoteproc/remoteproc1/state
+echo start | sudo tee /sys/class/remoteproc/remoteproc1/state
+sudo systemctl restart cdsprpcd
+```
+
 ## Never kill a process while it is running on the NPU
 
 Killing an NPU process in the middle of a graph execution (for example with `timeout`

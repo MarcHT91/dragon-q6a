@@ -67,6 +67,10 @@ the gap between drivers is the shader compiler (ir3 vs Qualcomm), not clocks.
   patches and the whole encoder by ~35%. It accumulates in fp16 (1-2% relative error at 512 px); fp32
   accumulation is a TODO.
 - SDPA export is 2x slower than explicit MatMul + Softmax.
+- **fp16 overflow in reductions on non-square inputs.** With fp16 arithmetic, the norms' `mean(x²)` (ncnn
+  `Reduction`) overflowed for some tokens at 384x512 (NaN everywhere downstream), never at the square sizes
+  tried before. `vl/encoder/vl_enc.py` marks Reduction, MatMul, Softmax and BinaryOp layers to compute in fp32
+  (ncnn featmask `31=1`) with fp16 storage: no NaN, same speed.
 
 ### llama.cpp
 
