@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+# built binaries
+vl/app/lfm3vl
+vl/app/test/enc_bench
+vl/app/test/img_test
+vl/app/test/tok_test
+d1/app/d1
+# third-party headers, fetched by vl/app/build.sh
+vl/app/third_party/
+# QNN headers, fetched by npu/native/build.sh
+npu/native/qnn-headers/

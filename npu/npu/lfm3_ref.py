@@ -25,6 +25,7 @@ class Weights:
     def __init__(self, d):
         self.dir = Path(d)
         self.cfg = json.loads((self.dir / "config.json").read_text())
+        self.cfg = self.cfg.get("text_config", self.cfg)       # a vision-language checkpoint: its language model
         idx = self.dir / "model.safetensors.index.json"
         if idx.exists():
             self.where = json.loads(idx.read_text())["weight_map"]
@@ -32,25 +33,36 @@ class Weights:
             f = safe_open(str(self.dir / "model.safetensors"), framework="pt")
             self.where = {k: "model.safetensors" for k in f.keys()}
         self.files = {}
+        # VL checkpoints (LFM3-VL, d1) keep the language model under model.language_model.
+        self.pre = "model.language_model." if "model.language_model.embed_tokens.weight" in self.where else "model."
+
+    def _name(self, name):
+        return self.pre + name[len("model."):] if name.startswith("model.") else name
 
     def get(self, name):
+        name = self._name(name)
         f = self.where[name]
         if f not in self.files:
             self.files[f] = safe_open(str(self.dir / f), framework="pt")
         return self.files[f].get_tensor(name).float()
 
     def has(self, name):
-        return name in self.where
+        return self._name(name) in self.where
 
     def layer(self, i):
-        p = f"model.layers.{i}."
-        return {k[len(p):]: self.get(k) for k in self.where if k.startswith(p)}
+        p = self._name(f"model.layers.{i}.")
+        return {k[len(p):]: self.get("model." + k[len(self.pre):]) for k in self.where if k.startswith(p)}
 
 
 class LFM3Ref:
     def __init__(self, d, n_layers=None, device="cpu"):
         self.W = Weights(d)
         self._st = None
+        self.full_allow = None    # optional [S, P] bool mask for the full-attention layers (default causal)
+        # Per-token rescaled projections (build_lfm3 PT_NORM): {(layer, "op" | "ffn"): d}. With it set, layer_forward
+        # also records the ranges of out/r ("o_n", "ffn_n") and sqrt(N*eps)/r ("cn_op", "cn_ffn"), r = ||[u, d]||,
+        # u the projection's input; and "un_op"/"un_ffn" = per-token ||u|| samples in self.pt_norms (to choose d).
+        self.pt, self.pt_norms = None, None
         c = self.c = self.W.cfg
         self.dev = torch.device(device)
         self.L = n_layers or c["num_hidden_layers"]
@@ -95,6 +107,8 @@ class LFM3Ref:
         s = (q @ k.repeat_interleave(rep, 0).transpose(1, 2)) / math.sqrt(D)
         qp = torch.as_tensor(pos, device=self.dev)[:, None]; kp = torch.arange(P, device=self.dev)[None]
         bad = kp > qp
+        if self.types[i] == "full_attention" and self.full_allow is not None:
+            bad = ~self.full_allow.to(self.dev)        # [S, P] which keys each query sees (d1's `set` attention)
         if self.types[i] == "sliding_attention":
             bad = bad | (kp <= qp - self.win)
         self.rec(i, "scores", s.masked_fill(bad, 0.0))
@@ -141,6 +155,16 @@ class LFM3Ref:
             o, st = self.conv(i, w, h, past, cap)
         else:
             o, st = self.attn(i, w, h, pos, past, cap)
+        if self.pt is not None or self.pt_norms is not None:
+            u = cap.get("out_in" if self.types[i] == "conv" else "o_in") if cap is not None else None
+            if u is None:
+                c2 = {}
+                if self.types[i] == "conv":
+                    self.conv(i, w, h, past, c2)
+                else:
+                    self.attn(i, w, h, pos, past, c2)
+                u = c2["out_in" if self.types[i] == "conv" else "o_in"]
+            self._pt_rec(i, "op", u, o)
         on = rms(o, w["post_operator_norm.weight"], self.eps)
         x1 = x + on
         h2 = rms(x1, w["ffn_norm.weight"], self.eps)
@@ -148,6 +172,8 @@ class LFM3Ref:
         sl = torch.nn.functional.silu(g)
         m = sl * u
         f = m @ w["feed_forward.w2.weight"].T
+        if self.pt is not None or self.pt_norms is not None:
+            self._pt_rec(i, "ffn", m, f)
         fn = rms(f, w["post_ffn_norm.weight"], self.eps)
         x2 = x1 + fn
         for nm, t in [("x_in", x), ("ln1", h), ("o", o), ("on", on), ("x_mid", x1), ("ln2", h2), ("gate", g),
@@ -159,6 +185,16 @@ class LFM3Ref:
             for nm, t in [("x_in", x), ("op", o), ("x_mid", x1), ("ln2", h2), ("gate", g), ("up", u), ("act", m), ("ffn", f), ("x_out", x2)]:
                 stats.setdefault((i, nm), []).append(t.abs().amax(-1).cpu())
         return x2, st
+
+    def _pt_rec(self, i, kind, u, out):
+        nu = u.norm(dim=-1)
+        if self.pt_norms is not None:
+            self.pt_norms.setdefault((i, kind), []).append(nu.float().cpu())
+        if self.pt is not None and (i, kind) in self.pt:
+            d = self.pt[(i, kind)]
+            r = torch.sqrt(nu ** 2 + d * d)[:, None]
+            self.rec(i, "o_n" if kind == "op" else "ffn_n", out / r)
+            self.rec(i, f"cn_{kind}", math.sqrt(out.shape[-1] * self.eps) / r)
 
     def forward(self, ids, start=0, past=None, stats=None):
         ids = torch.as_tensor(ids, device=self.dev)

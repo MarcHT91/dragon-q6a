@@ -47,6 +47,8 @@ class LFM3Native:
         self.head_qp = self.man["head"]["qparams"]
         self.load_s = time.time() - t
         self.embed = np.load(self.dir / "embed_f16.npy", mmap_mode="r")
+        self.nembed = self.embed.shape[0]
+        self._extra = None
         self.rope = {}
         for typ, rp in c["rope_parameters"].items():
             self.rope[typ] = (rp["rope_theta"], int(rp.get("partial_rotary_factor", 1.0) * self.D) // 2)
@@ -103,6 +105,32 @@ class LFM3Native:
             for g, P in self.pre:
                 lib.lf_add_prefill_graph(*plan(g, P))
         self._nvocab = H.outputs["logits"].a.size
+
+    # --- extra embedding rows (LFM3-VL image features) ---
+    def set_extra(self, rows):
+        """Rows [n, hidden] (e.g. projected image features) that token ids nembed..nembed+n-1 select; None clears."""
+        self._extra = None if rows is None else np.ascontiguousarray(np.asarray(rows, np.float32).astype(np.float16))
+        if self.fast:
+            import ctypes as C
+            r = self._extra
+            qnnrun.lib().lf_set_extra(r.ctypes.data_as(C.c_void_p) if r is not None else None, self.nembed,
+                                      0 if r is None else len(r))
+
+    def _emb(self, tokens):
+        t = np.atleast_1d(np.asarray(tokens))
+        if self._extra is None or (t < self.nembed).all():
+            return np.asarray(self.embed[t], np.float32)
+        return np.stack([self._extra[i - self.nembed] if i >= self.nembed else self.embed[i] for i in t]).astype(np.float32)
+
+    def image_ids(self, ids, image_token):
+        """ids with the k-th image_token replaced by the id of extra row k (call set_extra first)."""
+        out, k = [], 0
+        for t in ids:
+            if t == image_token:
+                out.append(self.nembed + k); k += 1
+            else:
+                out.append(t)
+        return out
 
     # --- persistent state: dict layer -> view(s) into the rpcmem buffers (same layout as LFM3NPU.st) ---
     @property
@@ -169,7 +197,7 @@ class LFM3Native:
         for g, G in self.graphs:
             I = G.inputs
             if first:
-                I["x"].a[...] = q16(self.embed[token].astype(np.float32)[None], I["x"].scale)
+                I["x"].a[...] = q16(self._emb(token), I["x"].scale)
                 first = False
             else:
                 np.copyto(I["x"].a, prev)
@@ -234,7 +262,7 @@ class LFM3Native:
         for (gd, Gd), (g, P) in zip(self.graphs, self.pre):
             I = P.inputs
             if prev is None:
-                I["x"].a[...] = q16(np.asarray(self.embed[tokens], np.float32), I["x"].scale).reshape(I["x"].a.shape)
+                I["x"].a[...] = q16(self._emb(tokens), I["x"].scale).reshape(I["x"].a.shape)
             else:
                 np.copyto(I["x"].a, prev)
             for nm, arr in [("cos_f", cf), ("sin_f", sf), ("mask_f", mf), ("cos_s", cs), ("sin_s", ss), ("mask_s", ms)]:

@@ -218,6 +218,14 @@ static int lf_C = 0, lf_rep = 1, lf_win = 0;
 static const __fp16* lf_embed = nullptr;
 static int lf_hid = 0, lf_T = 0, lf_TS = 0, lf_KV = 0, lf_D = 0, lf_head = -1, lf_head_x = -1, lf_head_logits = -1;
 static const uint16_t *rope_cf, *rope_sf, *rope_cs, *rope_ss;   // [T][D] q16 tables
+// Extra embedding rows (e.g. image features of LFM3-VL): token ids >= lf_nvocab index lf_extra[id - lf_nvocab].
+static const __fp16* lf_extra = nullptr;
+static int lf_nvocab = 0, lf_nextra = 0;
+
+static inline const __fp16* emb_row(int token) {
+    if (lf_nvocab && token >= lf_nvocab && token - lf_nvocab < lf_nextra) return lf_extra + (size_t)(token - lf_nvocab) * lf_hid;
+    return lf_embed + (size_t)token * lf_hid;
+}
 
 static inline uint16_t q16f(float x, float s) {
     float v = nearbyintf(x / s) + 32768.0f;
@@ -245,6 +253,12 @@ static GraphPlan make_plan(int g, const int* io, int nlayers, const int* layers)
         P.layers.push_back({L[0], L[1], L[2], L[3], L[4], L[5], L[6], L[7], L[8]});
     }
     return P;
+}
+
+// rows: fp16 [n, hid], kept alive by the caller; token ids nvocab..nvocab+n-1 then select them.
+int lf_set_extra(const void* rows, int nvocab, int n) {
+    lf_extra = (const __fp16*)rows; lf_nvocab = nvocab; lf_nextra = rows ? n : 0;
+    return 0;
 }
 
 int lf_add_graph(int g, const int* io, int nlayers, const int* layers) {
@@ -289,7 +303,7 @@ const uint16_t* lf_step(int token, int pos) {
         uint16_t* x = (uint16_t*)G.inb[P.x].ptr;
         if (gi == 0) {
             float s = tensor_scale(G.in[P.x]);
-            const __fp16* e = lf_embed + (size_t)token * hid;
+            const __fp16* e = emb_row(token);
             for (int i = 0; i < hid; i++) x[i] = q16f((float)e[i], s);
         } else {
             memcpy(x, prev, hid * sizeof(uint16_t));
@@ -361,7 +375,7 @@ int lf_prefill(const int* tokens, int pos) {
         if (gi == 0) {
             float s = tensor_scale(G.in[P.x]);
             for (int t = 0; t < C; t++) {
-                const __fp16* e = lf_embed + (size_t)tokens[t] * hid;
+                const __fp16* e = emb_row(tokens[t]);
                 for (int i = 0; i < hid; i++) x[(size_t)t * hid + i] = q16f((float)e[i], s);
             }
         } else {

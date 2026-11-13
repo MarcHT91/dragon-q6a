@@ -3,7 +3,7 @@ usage: calibrate_lfm3.py MODEL_DIR OUT [GPTQ_DIR]  (with GPTQ_DIR, calibrates th
 import sys, json, time
 from pathlib import Path
 import numpy as np, torch
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lfm3_ref import LFM3Ref
 from tokenizers import Tokenizer
 

@@ -122,7 +122,8 @@ def build_group(ref_w, cfg, cal, layers, T, TS, gptq_dir=None, bits=4):
             pl = g.op("Mul", [bx, wl], co, f"l{i}_cpl")
             cv = g.op("Add", [ps, pl], co, f"l{i}_conv")
             y = g.op("Mul", [Cv, cv], Q("y"), f"l{i}_y")
-            o = linear(y, "conv.out_proj.weight", Q("o"), "out")
+            op_in, op_in_qp, op_w, op_n_in = y, Q("y"), "conv.out_proj.weight", hid
+            o = None if (PT_NORM and "nd_op" in c) else linear(y, "conv.out_proj.weight", Q("o"), "out")
         else:
             cos_dq, sin_dq, mask_dq, n = rope[types[i]]
             a = "self_attn."
@@ -180,9 +181,14 @@ def build_group(ref_w, cfg, cal, layers, T, TS, gptq_dir=None, bits=4):
             gs = g.op("Reshape", [gs, g.shape_const([H, 1])], (1.0 / 65535.0, 0), f"l{i}_gsr")
             cg = g.op("Mul", [ctx, gs], Q("ctxg"), f"l{i}_ctxg")
             cg = g.op("Reshape", [cg, g.shape_const([1, H * D])], Q("ctxg"), f"l{i}_ctxgr")
-            o = linear(cg, a + "o_proj.weight", Q("o"), "o")
+            op_in, op_in_qp, op_w, op_n_in = cg, Q("ctxg"), a + "o_proj.weight", H * D
+            o = None if (PT_NORM and "nd_op" in c) else linear(cg, a + "o_proj.weight", Q("o"), "o")
 
-        on = norm(o, "post_operator_norm.weight", Q("o"), Q("on"), "pon")
+        if o is None:                                                  # per-token rescaled projection + post norm
+            on = pt_proj_norm(g, op_in, op_in_qp, op_n_in, c["nd_op"], lambda t, qp: linear(t, op_w, qp, "outn"),
+                              sym_u16(c["o_n"]), c["cn_op"], w["post_operator_norm.weight"], Q("on"), f"l{i}_pon", eps, [1])
+        else:
+            on = norm(o, "post_operator_norm.weight", Q("o"), Q("on"), "pon")
         x1 = g.op("Add", [x, on], Q("x_mid"), f"l{i}_x1")
         h2 = norm(x1, "ffn_norm.weight", Q("x_mid"), Q("ln2"), "ln2")
         gt = linear(h2, "feed_forward.w1.weight", Q("gate"), "w1")
@@ -190,8 +196,12 @@ def build_group(ref_w, cfg, cal, layers, T, TS, gptq_dir=None, bits=4):
         sg = g.op("Sigmoid", [gt], (1.0 / 65535.0, 0), f"l{i}_sig")
         si = g.op("Mul", [gt, sg], Q("silu"), f"l{i}_silu")
         act = g.op("Mul", [si, up], Q("act"), f"l{i}_act")
-        f = linear(act, "feed_forward.w2.weight", Q("ffn"), "w2")
-        fn = norm(f, "post_ffn_norm.weight", Q("ffn"), Q("fn"), "pfn")
+        if PT_NORM and "nd_ffn" in c:
+            fn = pt_proj_norm(g, act, Q("act"), cfg["intermediate_size"], c["nd_ffn"], lambda t, qp: linear(t, "feed_forward.w2.weight", qp, "w2n"),
+                              sym_u16(c["ffn_n"]), c["cn_ffn"], w["post_ffn_norm.weight"], Q("fn"), f"l{i}_pfn", eps, [1])
+        else:
+            f = linear(act, "feed_forward.w2.weight", Q("ffn"), "w2")
+            fn = norm(f, "post_ffn_norm.weight", Q("ffn"), Q("fn"), "pfn")
         last = i == layers[-1]
         x = g.op("Add", [x1, fn], sym_u16(c["x_out"]), f"l{i}_x2", out_q="x_out" if last else None)
     g.out("x_out", [1, hid])
@@ -214,12 +224,50 @@ def build_head(ref_w, cfg, cal, bits=8):
     return g.model()
 
 
-def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bits=4):
+PT_NORM = os.environ.get("PT_NORM") == "1"
+
+
+def pt_proj_norm(g, u, u_qp, n_in, d, project, n_out_qp, cn_max, gamma, out_qp, name, eps, lead):
+    """RMSNorm(W u) * gamma (eps included) computed with W applied to u / r, r = ||[u, d]|| per token, so that the
+    projection's output has about the same size for every token and uses its 16-bit range (the HTP's W8A16 MatMul
+    output carries ~12 bits: max-range outputs of small tokens lost up to 12%). Exact: RMSNorm is invariant to the
+    per-token 1/r except through eps, which becomes the column sqrt(N*eps)/r = (sqrt(N*eps)/d) * (d/r), d/r being the
+    last element of LpNorm([u, d]).  project(x, qp) -> the projection of x (n_in -> N) quantized with qp."""
+    s, zp = u_qp
+    lq = (1.0 / 32767.0, 32768)
+    dcol = g.dq(g.const(g.uid(name + "_d"), np.full(lead + [1], min(65535, int(round(d / s)) + zp), np.uint16), TP.UINT16), s, zp)
+    uc = g.op("Concat", [u, dcol], u_qp, name + "_uc", axis=-1)
+    z = g.op("LpNormalization", [uc], lq, name + "_un", axis=-1, p=2)
+    a, b = g.uid(name + "_unk"), g.uid(name + "_une")
+    g.nodes.append(helper.make_node("Split", [z, g.const(g.uid("sp"), np.array([n_in, 1], np.int64), TP.INT64)], [a, b], axis=-1))
+    un = g.dq(g.q(a, *lq), *lq)
+    e = g.dq(g.q(b, *lq), *lq)                                        # d / r
+    o = project(un, n_out_qp)                                          # (W u) / r
+    N = len(gamma)
+    k = math.sqrt(N * eps) / d
+    o_max = n_out_qp[0] * 32767 / 1.25
+    cn_max = min(cn_max, 2 * o_max)       # tokens with r ~ d (u ~ 0): eps dominates, their output ~0 either way
+    cn_qp = sym_u16(cn_max)
+    col = g.op("Mul", [e, g.weight_u16(name + "_k", np.array([[k]], np.float32))], cn_qp, name + "_cn")
+    cat_qp = sym_u16(max(o_max, cn_max))
+    oc = g.op("Concat", [o, col], cat_qp, name + "_cat", axis=-1)
+    v = g.op("LpNormalization", [oc], lq, name + "_lp", axis=-1, p=2)
+    a2, b2 = g.uid(name + "_keep"), g.uid(name + "_drop")
+    g.nodes.append(helper.make_node("Split", [v, g.const(g.uid("sp"), np.array([N, 1], np.int64), TP.INT64)], [a2, b2], axis=-1))
+    vq = g.dq(g.q(a2, *lq), *lq)
+    g.dq(g.q(b2, *lq), *lq)
+    gd = g.weight_u16(name + "_g", np.asarray(gamma, np.float32) * math.sqrt(N))
+    return g.op("Mul", [vq, gd], out_qp, name)
+
+
+def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bits=4, kv_only_last=False):
     bits0 = bits
     """Chunked prefill: C new tokens at positions p..p+C-1 (all real; remainders go through decode).
     Inputs:  x [C,hid]; cos_*/sin_* [C,D]; mask_f [1,rep*C,T+C], mask_s [1,rep*C,TS+C] (rows = (r,t), host-built,
              includes the causal in-chunk part); per layer the same cache/state inputs as decode.
-    Outputs: x_out [C,hid]; conv: state_new{i} [K-1,hid]; attn: k_new{i}, v_new{i} [KV,C,D]."""
+    Outputs: x_out [C,hid]; conv: state_new{i} [K-1,hid]; attn: k_new{i}, v_new{i} [KV,C,D].
+    kv_only_last: the last layer (an attention layer) only computes its k_new/v_new, and x_out is its input. d1's
+    `set` attention runs stage by stage: every token's keys of a full-attention layer exist before any query of it."""
     types = cfg["layer_types"]
     H, KV, D, hid = cfg["num_attention_heads"], cfg["num_key_value_heads"], cfg["head_dim"], cfg["hidden_size"]
     K, eps = cfg["conv_L_cache"], cfg["norm_eps"]
@@ -228,14 +276,19 @@ def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bit
     xs = lambda i: sym_u16(cal["layers"][i]["x_in"] if i == layers[0] else cal["layers"][i - 1]["x_out"])
     x = g.inp("x", [C, hid], xs(layers[0]))
     rq = (1.0 / 32767.0, 32768)
+    if kv_only_last:
+        assert types[layers[-1]] != "conv", "kv_only_last needs an attention layer last"
+    attn_layers = layers[:-1] if kv_only_last else layers
     need = {types[i] for i in layers}
+    need_mask = {types[i] for i in attn_layers}
     rope = {}
     for typ, sfx, n in [("full_attention", "f", T), ("sliding_attention", "s", TS)]:
         if typ in need:
             cs = g.inp(f"cos_{sfx}", [C, D], rq); sn = g.inp(f"sin_{sfx}", [C, D], rq)
             cs = g.op("Reshape", [cs, g.shape_const([C, 1, D])], rq, f"cos{sfx}r")
             sn = g.op("Reshape", [sn, g.shape_const([C, 1, D])], rq, f"sin{sfx}r")
-            rope[typ] = (cs, sn, g.inp(f"mask_{sfx}", [1, rep * C, n + C], (MASK / 32767.0, 32768)), n)
+            mk = g.inp(f"mask_{sfx}", [1, rep * C, n + C], (MASK / 32767.0, 32768)) if typ in need_mask else None
+            rope[typ] = (cs, sn, mk, n)
     ax = lambda a: g.const(g.uid("ax"), np.array(a, np.int64), TP.INT64)
 
     def split(t, sizes, axis, qp, tag):
@@ -262,6 +315,24 @@ def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bit
 
         norm = lambda t, wname, in_qp, qp, tag, lead=[C]: rmsnorm_eps(g, t, w[wname], in_qp, qp, f"l{i}_{tag}", eps, lead)
         h = norm(x, "operator_norm.weight", xs(i), Q("ln1"), "ln1")
+        if kv_only_last and i == layers[-1]:
+            cos_dq, sin_dq, _, _ = rope[types[i]]
+            a = "self_attn."
+            qp_k = sym_u16(c["k_all"]); qp_v = sym_u16(c["v_all"])
+            k = linear(h, a + "k_proj.weight", Q("k_raw"), "k")
+            v = linear(h, a + "v_proj.weight", Q("v"), "v")
+            k = g.op("Reshape", [k, g.shape_const([C, KV, D])], Q("k_raw"), f"l{i}_kr")
+            k = rmsnorm_eps(g, k, w[a + "k_norm.weight"], Q("k_raw"), qp_k, f"l{i}_kn", eps, [C, KV])
+            aa, bb = split(k, [D // 2, D // 2], -1, qp_k, f"l{i}_krope_h")
+            sw = g.op("Concat", [bb, aa], qp_k, f"l{i}_krope_sw", axis=-1)
+            k = g.op("Add", [g.op("Mul", [k, cos_dq], qp_k, f"l{i}_krope_c"), g.op("Mul", [sw, sin_dq], qp_k, f"l{i}_krope_s")], qp_k, f"l{i}_krope_r")
+            kT = g.op("Transpose", [k], qp_k, f"l{i}_kT", perm=[1, 0, 2])
+            g.op("Reshape", [kT, g.shape_const([KV, C, D])], qp_k, f"l{i}_ko", out_q=f"k_new{i}")
+            v = g.op("Reshape", [v, g.shape_const([C, KV, D])], qp_v, f"l{i}_vr")
+            vT = g.op("Transpose", [v], qp_v, f"l{i}_vT", perm=[1, 0, 2])
+            g.op("Reshape", [vT, g.shape_const([KV, C, D])], qp_v, f"l{i}_vo", out_q=f"v_new{i}")
+            g.out(f"k_new{i}", [KV, C, D]); g.out(f"v_new{i}", [KV, C, D])
+            break
         if types[i] == "conv":
             qp_bx = sym_u16(c["bx"])
             st = g.inp(f"state{i}", [K - 1, hid], qp_bx)
@@ -281,7 +352,8 @@ def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bit
                 term = g.op("Mul", [win, g.weight_u16(f"l{i}_cw{k}", kw[:, k][None])], co, f"l{i}_ct{k}")
                 acc = term if acc is None else g.op("Add", [acc, term], co, f"l{i}_ca{k}")
             y = g.op("Mul", [Cv, acc], Q("y"), f"l{i}_y")
-            o = linear(y, "conv.out_proj.weight", Q("o"), "out")
+            op_in, op_in_qp, op_w, op_n_in = y, Q("y"), "conv.out_proj.weight", hid
+            o = None if (PT_NORM and "nd_op" in c) else linear(y, "conv.out_proj.weight", Q("o"), "out")
         else:
             cos_dq, sin_dq, mask_dq, n = rope[types[i]]
             a = "self_attn."
@@ -344,9 +416,14 @@ def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bit
             gs = g.op("Reshape", [gs, g.shape_const([C, H, 1])], pq, f"l{i}_gsr")
             cg = g.op("Mul", [ctx, gs], Q("ctxg"), f"l{i}_ctxg")
             cg = g.op("Reshape", [cg, g.shape_const([C, H * D])], Q("ctxg"), f"l{i}_ctxgr")
-            o = linear(cg, a + "o_proj.weight", Q("o"), "o")
+            op_in, op_in_qp, op_w, op_n_in = cg, Q("ctxg"), a + "o_proj.weight", H * D
+            o = None if (PT_NORM and "nd_op" in c) else linear(cg, a + "o_proj.weight", Q("o"), "o")
 
-        on = norm(o, "post_operator_norm.weight", Q("o"), Q("on"), "pon")
+        if o is None:                                                  # per-token rescaled projection + post norm
+            on = pt_proj_norm(g, op_in, op_in_qp, op_n_in, c["nd_op"], lambda t, qp: linear(t, op_w, qp, "outn"),
+                              sym_u16(c["o_n"]), c["cn_op"], w["post_operator_norm.weight"], Q("on"), f"l{i}_pon", eps, [C])
+        else:
+            on = norm(o, "post_operator_norm.weight", Q("o"), Q("on"), "pon")
         x1 = g.op("Add", [x, on], Q("x_mid"), f"l{i}_x1")
         h2 = norm(x1, "ffn_norm.weight", Q("x_mid"), Q("ln2"), "ln2")
         gt = linear(h2, "feed_forward.w1.weight", Q("gate"), "w1")
@@ -354,9 +431,14 @@ def build_prefill_group(ref_w, cfg, cal, layers, T, TS, C=16, gptq_dir=None, bit
         sg = g.op("Sigmoid", [gt], (1.0 / 65535.0, 0), f"l{i}_sig")
         si = g.op("Mul", [gt, sg], Q("silu"), f"l{i}_silu")
         act = g.op("Mul", [si, up], Q("act"), f"l{i}_act")
-        f = linear(act, "feed_forward.w2.weight", Q("ffn"), "w2")
-        fn = norm(f, "post_ffn_norm.weight", Q("ffn"), Q("fn"), "pfn")
+        if PT_NORM and "nd_ffn" in c:
+            fn = pt_proj_norm(g, act, Q("act"), cfg["intermediate_size"], c["nd_ffn"], lambda t, qp: linear(t, "feed_forward.w2.weight", qp, "w2n"),
+                              sym_u16(c["ffn_n"]), c["cn_ffn"], w["post_ffn_norm.weight"], Q("fn"), f"l{i}_pfn", eps, [C])
+        else:
+            f = linear(act, "feed_forward.w2.weight", Q("ffn"), "w2")
+            fn = norm(f, "post_ffn_norm.weight", Q("ffn"), Q("fn"), "pfn")
         x = g.op("Add", [x1, fn], sym_u16(c["x_out"]), f"l{i}_x2")
-    g.op("Reshape", [x, g.shape_const([C, hid])], sym_u16(cal["layers"][layers[-1]]["x_out"]), "xo", out_q="x_out")
+    last = layers[-1] - 1 if kv_only_last else layers[-1]
+    g.op("Reshape", [x, g.shape_const([C, hid])], sym_u16(cal["layers"][last]["x_out"]), "xo", out_q="x_out")
     g.out("x_out", [C, hid])
     return g.model()
