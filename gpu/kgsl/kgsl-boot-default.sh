@@ -1,7 +1,7 @@
 #!/bin/bash
 # Add a systemd-boot entry identical to the current one plus msm.skip_gpu=1 (msm keeps the display but does not
-# bind the GPU), and make it the default. Undo with kgsl-revert.sh. (bootctl set-oneshot does not work on this
-# board: its firmware exposes no EFI variables to Linux.)
+# bind the GPU), and make it the default. Undo with kgsl-revert.sh. (With firmware 251230 bootctl set-oneshot does not
+# work: no EFI variables in Linux. With firmware 260916 + kernel 7.3 use kgsl-boot-once.sh instead.)
 # Run as: sudo bash kgsl-boot-default.sh, then reboot.
 set -eu
 E=/boot/efi/loader/entries; L=/boot/efi/loader/loader.conf

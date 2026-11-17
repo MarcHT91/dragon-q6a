@@ -89,13 +89,16 @@ Ubuntu's public "Qualcomm Addon Packages" PPA (`ppa:ubuntu-qcom-iot/qcom-ppa`, s
 it for Ubuntu 26.04: `kgsl-dkms` 1.0.11, `qcom-adreno-*` 1.877.5 (OpenCL, Vulkan, EGL/GLES),
 `qairt-*` 2.49 (QNN). Nothing has to be ported:
 
-- `kgsl/build-kgsl.sh` builds `msm_kgsl.ko` against the running 7.2.9 kernel tree without changes. All 490
-  imported symbols are exported by the kernel. It matches the upstream device tree
+- `kgsl/build-kgsl.sh` builds `msm_kgsl.ko` against the running kernel: the 7.2.9 tree without changes, and
+  the 7.3.1 headers with one adaptation (7.3 dropped `qcom_ubwc_cfg_data.ubwc_swizzle`; the script then uses
+  `qcom_ubwc_swizzle()`). All 490 imported symbols are exported by both kernels. Loading it has only been
+  tested on 7.2.9. It matches the upstream device tree
   (`qcom,adreno-635.0` = A643, chip id 0x06030500; `qcom,adreno-gmu-635.0`) and uses the `a660_sqe.fw` /
   `a660_gmu.bin` firmware already on the board.
 - The GPU has to be left free by msm. Our kernel has `msm.skip_gpu` (msm is built in, so it is a kernel
   command-line option): `kgsl/kgsl-boot-default.sh` adds a systemd-boot entry with it and makes it the
-  default. `bootctl set-oneshot` does not work because the firmware exposes no EFI variables.
+  default. With firmware 251230 `bootctl set-oneshot` does not work because Linux gets no EFI variables.
+  With firmware 260916 and kernel 7.3, `kgsl/kgsl-boot-once.sh` adds the entry and boots it only once.
 - Unbinding the GPU from msm at runtime instead (`echo 3d00000.gpu > .../adreno/unbind`) does **not**
   work. msm leaves devres resources on the GMU (`3d6a000.gmu: Resources present before probing`), so
   KGSL cannot probe it; msm_gem WARNs, and the display is gone until a reboot.

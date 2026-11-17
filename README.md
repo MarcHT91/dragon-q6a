@@ -16,7 +16,7 @@ which kernel its results come from. Each directory is self-contained and has its
 | [`npu/`](npu) | LFM3-1.7B (Liquid AI) running entirely on the Hexagon HTP v68 NPU, without the Qualcomm SDK: graphs compiled with `onnxruntime-qnn`, run by a native QNN runner (11.7 tok/s) or ONNX Runtime. |
 | [`vl/`](vl) | LFM3-VL-2B (vision-language): the vision encoder on the Adreno GPU (ncnn/Vulkan) and the language model on the NPU, in one C++ chat program. |
 | [`d1/`](d1) | d1-2B (Liquid AI's decision model): calibrated yes/no, choice and score answers about text and pictures in one pass, GPU encoder + NPU with int8 weights, C++ program and JSON service mode. |
-| [`gpu/`](gpu) | GPU compute experiments: ncnn on Turnip (subgroup bug, a Vulkan MatMul layer), Qualcomm's KGSL driver built for 7.2.9, OpenCL/CLML/QNN GPU, llama.cpp; results and scripts. |
+| [`gpu/`](gpu) | GPU compute experiments: ncnn on Turnip (subgroup bug, a Vulkan MatMul layer), Qualcomm's KGSL driver built for 7.2.9 and 7.3.1, OpenCL/CLML/QNN GPU, llama.cpp; results and scripts. |
 
 The fixes are done on the board side: kernel modules, configuration and scripts, not settings
 on the TV or the monitor. Kernel patches sent upstream (v1 2026-11-11, v2 2026-11-16) are in

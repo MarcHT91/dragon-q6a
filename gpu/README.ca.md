@@ -91,14 +91,17 @@ El PPA públic "Qualcomm Addon Packages" d'Ubuntu (`ppa:ubuntu-qcom-iot/qcom-ppa
 per a Ubuntu 26.04: `kgsl-dkms` 1.0.11, `qcom-adreno-*` 1.877.5 (OpenCL, Vulkan, EGL/GLES) i `qairt-*`
 2.49 (QNN). No cal portar res:
 
-- `kgsl/build-kgsl.sh` compila `msm_kgsl.ko` contra l'arbre del kernel 7.2.9 sense canvis. El kernel
-  exporta els 490 símbols que el mòdul importa. Reconeix el device tree estàndard (`qcom,adreno-635.0` =
+- `kgsl/build-kgsl.sh` compila `msm_kgsl.ko` contra el kernel en marxa: l'arbre de la 7.2.9 sense canvis,
+  i les capçaleres de la 7.3.1 amb una adaptació (la 7.3 ha tret `qcom_ubwc_cfg_data.ubwc_swizzle`; l'script
+  fa servir `qcom_ubwc_swizzle()`). Tots dos kernels exporten els 490 símbols que el mòdul importa. Només s'ha provat de carregar-lo a
+  la 7.2.9. Reconeix el device tree estàndard (`qcom,adreno-635.0` =
   A643, chip id 0x06030500; `qcom,adreno-gmu-635.0`) i fa servir el firmware `a660_sqe.fw` / `a660_gmu.bin`
   que ja hi ha a la placa.
 - msm ha de deixar lliure la GPU. El nostre kernel té `msm.skip_gpu` (msm és dins del kernel, així que és
   una opció de la línia d'arrencada): `kgsl/kgsl-boot-default.sh` afegeix una entrada de systemd-boot amb
-  l'opció i la posa per defecte. `bootctl set-oneshot` no funciona perquè el firmware no exposa variables
-  EFI.
+  l'opció i la posa per defecte. Amb el firmware 251230, `bootctl set-oneshot` no funciona perquè Linux no
+  té variables EFI. Amb el firmware 260916 i la 7.3, `kgsl/kgsl-boot-once.sh` afegeix l'entrada i només
+  l'arrenca una vegada.
 - Desvincular la GPU de msm en calent (`echo 3d00000.gpu > .../adreno/unbind`) **no** funciona. msm deixa
   recursos devres sobre la GMU (`3d6a000.gmu: Resources present before probing`) i KGSL no la pot agafar;
   surten WARN de msm_gem i la pantalla queda apagada fins que reinicies.

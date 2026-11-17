@@ -17,7 +17,7 @@ el seu propi README.
 | [`npu/`](npu) | LFM3-1.7B (Liquid AI) executant-se del tot a la NPU Hexagon HTP v68, sense el SDK de Qualcomm: grafs compilats amb `onnxruntime-qnn`, executats per un runner natiu de QNN (11,7 tok/s) o per ONNX Runtime. |
 | [`vl/`](vl) | LFM3-VL-2B (visió i llenguatge): l'encoder de visió a la GPU Adreno (ncnn/Vulkan) i el model de llenguatge a la NPU, en un sol programa de xat en C++. |
 | [`d1/`](d1) | d1-2B (el model de decisió de Liquid AI): respostes calibrades de sí/no, elecció i puntuació sobre text i imatges en una passada, encoder a la GPU + NPU amb pesos int8, programa en C++ i mode servei JSON. |
-| [`gpu/`](gpu) | Proves de càlcul a la GPU: ncnn sobre Turnip (error dels subgroups, capa MatMul per a Vulkan), el driver KGSL de Qualcomm compilat per a la 7.2.9, OpenCL/CLML/QNN GPU, llama.cpp; resultats i scripts. |
+| [`gpu/`](gpu) | Proves de càlcul a la GPU: ncnn sobre Turnip (error dels subgroups, capa MatMul per a Vulkan), el driver KGSL de Qualcomm compilat per a la 7.2.9 i la 7.3.1, OpenCL/CLML/QNN GPU, llama.cpp; resultats i scripts. |
 
 Els arranjaments es fan des de la placa: mòduls del kernel, configuració i scripts, i no amb
 ajustos a la TV o al monitor. Els pedaços del kernel enviats als desenvolupadors del
