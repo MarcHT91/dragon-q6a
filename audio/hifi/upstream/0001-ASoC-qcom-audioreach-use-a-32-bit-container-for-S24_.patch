@@ -1,4 +1,4 @@
-From 8f8763c9448439702450588e9f8fe21312ea8de8 Mon Sep 17 00:00:00 2001
+From d6c0466002906d9de4761022004b29b9a0e56701 Mon Sep 17 00:00:00 2001
 From: Marc Herrero <marcht@proton.me>
 Date: Wed, 11 Nov 2026 10:47:28 +0000
 Subject: [PATCH 1/2] ASoC: qcom: audioreach: use a 32-bit container for S24_LE
@@ -29,29 +29,36 @@ sign-extended into the top byte, as alsa-lib's conversions do.
 
 Fixes: 25ab80db6b13 ("ASoC: qdsp6: audioreach: add module configuration command helpers")
 Cc: stable@vger.kernel.org
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
 Signed-off-by: Marc Herrero <marcht@proton.me>
 ---
- sound/soc/qcom/qdsp6/audioreach.c | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
+ sound/soc/qcom/qdsp6/audioreach.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
 
 diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
-index d2dc5d37bccf..937506edf34a 100644
+index d2dc5d37bccf..aa1f4e296764 100644
 --- a/sound/soc/qcom/qdsp6/audioreach.c
 +++ b/sound/soc/qcom/qdsp6/audioreach.c
-@@ -1216,7 +1216,7 @@ static int audioreach_pcm_set_media_format(struct q6apm_graph *graph,
+@@ -1216,7 +1216,12 @@ static int audioreach_pcm_set_media_format(struct q6apm_graph *graph,
  	media_cfg->interleaved = module->interleave_type;
  	media_cfg->num_channels = mcfg->num_channels;
  	media_cfg->q_factor = mcfg->bit_width - 1;
 -	media_cfg->bits_per_sample = mcfg->bit_width;
++	/*
++	 * bit_width is the number of valid bits in a sample, bits_per_sample
++	 * the size of the container it is stored in. S24_LE keeps 24 valid
++	 * bits in a 32-bit container, so it is 24/32, not packed 24/24.
++	 */
 +	media_cfg->bits_per_sample = mcfg->bit_width == 24 ? 32 : mcfg->bit_width;
  	/* Convert the physical mapping to a logical mapping of the channels */
  	for (i = 0, j = 0; i < AR_PCM_MAX_NUM_CHANNEL && j < mcfg->num_channels; i++) {
  		if (!mcfg->channel_map[i])
-@@ -1308,7 +1308,7 @@ static int audioreach_shmem_set_media_format(struct q6apm_graph *graph,
+@@ -1308,7 +1313,8 @@ static int audioreach_shmem_set_media_format(struct q6apm_graph *graph,
  		cfg->sample_rate = mcfg->sample_rate;
  		cfg->bit_width = mcfg->bit_width;
  		cfg->alignment = PCM_LSB_ALIGNED;
 -		cfg->bits_per_sample = mcfg->bit_width;
++		/* S24_LE: 24 valid bits in a 32-bit container, see above */
 +		cfg->bits_per_sample = mcfg->bit_width == 24 ? 32 : mcfg->bit_width;
  		cfg->q_factor = mcfg->bit_width - 1;
  		cfg->endianness = PCM_LITTLE_ENDIAN;

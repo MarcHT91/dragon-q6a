@@ -1,4 +1,4 @@
-From bc671558eb85668c5ea0731a6c9c5eb83f9023e3 Mon Sep 17 00:00:00 2001
+From a3e002bcce90dfdc6579cd553d22d07fafd1de50 Mon Sep 17 00:00:00 2001
 From: Marc Herrero <marcht@proton.me>
 Date: Wed, 11 Nov 2026 10:47:28 +0000
 Subject: [PATCH 2/2] ASoC: qcom: audioreach: only disconnect the route a mixer
@@ -21,31 +21,34 @@ depends on write order. On QCS6490 (Radxa Dragon Q6A):
    MultiMedia1 from the headphones. A PCM started on MultiMedia1 after
    that never advances (hw_ptr stays at 0).
 
-Only drop the link when it belongs to the control being cleared, that is
-when audioreach_is_vmixer_connected() reports it as connected. Writing 0
-to a control that is not the active route becomes a no-op, which matches
-what its get() callback already returns.
+Make audioreach_connect_sub_graphs() only clear the link when it belongs
+to the control being cleared, using the same test as
+audioreach_is_vmixer_connected() does for get(). The DAPM mixer state is
+still updated for every write, so DAPM keeps tracking each route control
+as before.
 
 Fixes: e4977b91cff8 ("ASoC: qdsp6: audioreach: Simplify handing FE and BE graph connections")
 Cc: stable@vger.kernel.org
 Signed-off-by: Marc Herrero <marcht@proton.me>
 ---
- sound/soc/qcom/qdsp6/topology.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ sound/soc/qcom/qdsp6/topology.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
-index 612d8f03e6e9..e92408e09bac 100644
+index 612d8f03e6e9..aa2ab2b058d0 100644
 --- a/sound/soc/qcom/qdsp6/topology.c
 +++ b/sound/soc/qcom/qdsp6/topology.c
-@@ -1300,7 +1300,7 @@ static int audioreach_put_audio_mixer(struct snd_kcontrol *kcontrol,
- 	if (ucontrol->value.integer.value[0]) {
- 		audioreach_connect_sub_graphs(data, scontrol, dapm_scontrol, true);
- 		snd_soc_dapm_mixer_update_power(dapm, kcontrol, 1, NULL);
+@@ -1240,7 +1240,9 @@ static void audioreach_connect_sub_graphs(struct q6apm *apm,
+ 		info->dst_mod_inst_id = m2->module_instance_id;
+ 		info->dst_mod_ip_port_id = 2;
+ 
 -	} else {
-+	} else if (audioreach_is_vmixer_connected(data, scontrol, dapm_scontrol)) {
- 		audioreach_connect_sub_graphs(data, scontrol, dapm_scontrol, false);
- 		snd_soc_dapm_mixer_update_power(dapm, kcontrol, 0, NULL);
- 	}
++	} else if (info->src_mod_inst_id == m1->module_instance_id &&
++		   info->dst_mod_inst_id == m2->module_instance_id) {
++		/* only drop the link this control made, not another FE's */
+ 		info->src_mod_inst_id = 0;
+ 		info->src_mod_op_port_id = 0;
+ 		info->dst_mod_inst_id = 0;
 -- 
 2.53.0
 

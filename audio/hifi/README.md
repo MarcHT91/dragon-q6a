@@ -36,8 +36,16 @@ so S24_LE @ 48 kHz is the best the AirPlay path can carry.
       it. Upstream clears the back end's link on any 0 write, so `alsactl restore`
       loses HDMI and the board's UCM HDMI sequence disconnects the headphones.
       Upstream patch: `upstream/0002-*.patch`. See [`../route`](../route).
+    * Stream volume changes reach the DSP while the graph runs (AirPlay volume),
+      only once the graph is started, under the DAPM lock, keeping the old gain
+      if the DSP rejects the new one. Upstream patch: `upstream/0003-*.patch`.
   * `prepare.sh` takes the sources of the target kernel (tree or kernel.org)
-    and refuses to build if the patch context changed.
+    and applies `dkms/patches/*.patch` (the v2 sent upstream; `patches/<major.minor>/`
+    holds backports, e.g. `7.2/`). It refuses to build if a patch does not apply.
+    When the sources come from kernel.org (headers packages ship no `.c` files), the
+    Armbian patches for these files are applied first (`dkms/armbian/<major.minor>/`,
+    from armbian/build `patch/kernel/archive/qcs6490-<major.minor>`), so the module
+    does not drop the fixes the Armbian kernel carries.
 * **Topology override** `/lib/firmware/updates/qcom/qcs6490/QCS6490-Radxa-Dragon-Q6A-tplg.bin`
   made by `patch-tplg.py` (MultiMedia1 caps only: formats 0x4→0x44, rates 48000→8000–192000).
 * `/etc/modprobe.d/qcs6490-hifi.conf`: `rx_be_format=24 rx_be_rate=48000`.
@@ -45,7 +53,8 @@ so S24_LE @ 48 kHz is the best the AirPlay path can carry.
 ## Install
 
 Needs `flex bison bc libelf-dev dkms`. With the Armbian `linux-headers-edge-qcs6490`
-package matching the running kernel:
+package matching the running kernel (published for 7.3.1, `apt.armbian.com` suite
+`resolute`):
 
     sudo ./install.sh && sudo reboot
 
