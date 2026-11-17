@@ -75,8 +75,12 @@ static int set_burst() {
     QnnHtpPerfInfrastructure_PowerConfig_t lat; memset(&lat, 0, sizeof lat);
     lat.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY; lat.rpcControlLatencyConfig = 100;
     QnnHtpPerfInfrastructure_PowerConfig_t pol; memset(&pol, 0, sizeof pol);
-    pol.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME; pol.rpcPollingTimeConfig = 9999;
-    const QnnHtpPerfInfrastructure_PowerConfig_t* cfg[] = {&dcvs, &lat, &pol, nullptr};
+    // QNNRUN_POLL_US: RPC polling time in us (default 9999; 0 = don't request polling). Kernels >= 7.3 honour it
+    // (FASTRPC_IOCTL_SET_OPTION); older ones silently ignore it.
+    const char* pe = getenv("QNNRUN_POLL_US");
+    uint32_t poll_us = pe ? (uint32_t)strtoul(pe, nullptr, 10) : 9999;
+    pol.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME; pol.rpcPollingTimeConfig = poll_us;
+    const QnnHtpPerfInfrastructure_PowerConfig_t* cfg[] = {&dcvs, &lat, poll_us ? &pol : nullptr, nullptr};
     if (perf.setPowerConfig(id, cfg) != QNN_SUCCESS) { LOGE("setPowerConfig failed"); return -1; }
     return 0;
 }
