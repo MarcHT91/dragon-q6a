@@ -231,10 +231,15 @@ L'FFmpeg de `/opt` ha de mantenir la mateixa `LIBAVCODEC_VERSION_MAJOR/MINOR` qu
 
 ```bash
 git -C ~/src/ffmpeg-iris fetch origin
-git -C ~/src/ffmpeg-iris show origin/test/8.0.x/main:libavcodec/version.h | grep VERSION_MINOR
-git -C ~/src/ffmpeg-iris rebase --onto origin/test/8.0.x/main 2a287060cc6e iris
+git -C ~/src/ffmpeg-iris show origin/test/8.0.1/main:libavcodec/version.h | grep VERSION_MINOR
+git -C ~/src/ffmpeg-iris rebase --onto origin/test/8.0.1/main 2a287060cc6e iris
 ./build.sh && tests/abi-check.sh && tests/run-matrix.sh
 ```
+
+rpi-ffmpeg publica les actualitzacions de la 8.0 a `test/8.0.1/main` (no hi ha cap branca
+`test/8.0.x`). Kodi 22 fa servir FFmpeg 9 (`libavcodec63`), que no és compatible a nivell d'ABI:
+amb Kodi 22 caldrà portar els pegats a `test/9.0.2/main` de rpi-ffmpeg (o posterior) i canviar
+`BASE` a `build.sh`.
 
 ## Llicència
 
