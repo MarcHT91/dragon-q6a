@@ -15,6 +15,7 @@ $FF $SRC=1920x1080 -pix_fmt yuv420p -c:v libx264 -bf 0 -g 50 -f h264 "$D/b.h264"
 cat "$D/a.h264" "$D/b.h264" > "$D/ab.h264"
 $FF -f h264 -framerate 25 -i "$D/ab.h264" -c copy -bsf:v setts=ts=N/25/TB "$D/h264_reschange.mkv"
 rm -f "$D"/a.h264 "$D"/b.h264 "$D"/ab.h264
-# 10 bits: ha de caure a programari (fora d'abast per a iris).
+# 10 bits: iris amb firmware gen2 el descodifica a P010; amb gen1 ha de caure a programari.
 $FF $SRC=1920x1080 -pix_fmt yuv420p10le -c:v libx265 -x265-params log-level=error "$D/hevc10_1920x1080.mkv"
+$FF $SRC=1920x1080 -pix_fmt yuv420p10le -c:v libvpx-vp9 -profile:v 2 -b:v 4M -deadline realtime -cpu-used 8 -g 50 "$D/vp910_1920x1080.mkv"
 ls -1 "$D"

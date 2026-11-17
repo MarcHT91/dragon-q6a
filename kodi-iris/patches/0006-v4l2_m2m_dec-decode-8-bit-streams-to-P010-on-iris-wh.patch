@@ -1,0 +1,119 @@
+From b7179355a3c9d7f648634f43d7c358571ab69704 Mon Sep 17 00:00:00 2001
+From: Marc Herrero <marcht@proton.me>
+Date: Mon, 16 Nov 2026 21:11:13 +0000
+Subject: [PATCH] v4l2_m2m_dec: decode >8-bit streams to P010 on iris when the
+ driver offers it
+
+Iris with HFI Gen2 firmware offers P010 (and Q10C) capture formats and
+picks P010 at source change for 10-bit HEVC and VP9 profile 2 streams.
+Map P010 <-> V4L2 P010, export it as DRM_FORMAT_P010 for DRM PRIME, and
+only apply FF_V4L2_QUIRK_8BIT_ONLY when the capture queue has no P010
+format (Gen1 firmware).
+---
+ libavcodec/v4l2_buffers.c | 16 ++++++++++++++++
+ libavcodec/v4l2_fmt.c     |  3 +++
+ libavcodec/v4l2_m2m_dec.c | 26 ++++++++++++++++++++++++--
+ 3 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/libavcodec/v4l2_buffers.c b/libavcodec/v4l2_buffers.c
+index feb12f4419..83fb588fa6 100644
+--- a/libavcodec/v4l2_buffers.c
++++ b/libavcodec/v4l2_buffers.c
+@@ -489,6 +489,21 @@ static uint8_t * v4l2_get_drm_frame(V4L2Buffer *avbuf)
+         layer->planes[1].pitch = avbuf->plane_info[0].bytesperline;
+         break;
+ 
++    case AV_PIX_FMT_P010:
++
++        layer->format = DRM_FORMAT_P010;
++
++        if (avbuf->num_planes > 1)
++            break;
++
++        layer->nb_planes = 2;
++
++        layer->planes[1].object_index = 0;
++        layer->planes[1].offset = avbuf->plane_info[0].bytesperline *
++            avbuf->context->format.fmt.pix.height;
++        layer->planes[1].pitch = avbuf->plane_info[0].bytesperline;
++        break;
++
+     case AV_PIX_FMT_YUV420P:
+ 
+         layer->format = DRM_FORMAT_YUV420;
+@@ -686,6 +701,7 @@ static int v4l2_buffer_buf_to_swframe(AVFrame *frame, V4L2Buffer *avbuf)
+     switch (avbuf->context->av_pix_fmt) {
+     case AV_PIX_FMT_NV12:
+     case AV_PIX_FMT_NV21:
++    case AV_PIX_FMT_P010:
+         if (avbuf->num_planes > 1)
+             break;
+         frame->linesize[1] = frame->linesize[0];
+diff --git a/libavcodec/v4l2_fmt.c b/libavcodec/v4l2_fmt.c
+index 100827b7af..95937e93cd 100644
+--- a/libavcodec/v4l2_fmt.c
++++ b/libavcodec/v4l2_fmt.c
+@@ -59,6 +59,9 @@ static const struct fmt_conversion {
+     { AV_FMT(YUV410P),     AV_CODEC(RAWVIDEO),    V4L2_FMT(YUV410) },
+     { AV_FMT(YUV410P),     AV_CODEC(RAWVIDEO),    V4L2_FMT(YVU410) },
+     { AV_FMT(NV12),        AV_CODEC(RAWVIDEO),    V4L2_FMT(NV12) },
++#ifdef V4L2_PIX_FMT_P010
++    { AV_FMT(P010),        AV_CODEC(RAWVIDEO),    V4L2_FMT(P010) },
++#endif
+     { AV_FMT(NONE),        AV_CODEC(MJPEG),       V4L2_FMT(MJPEG) },
+     { AV_FMT(NONE),        AV_CODEC(MJPEG),       V4L2_FMT(JPEG) },
+ #ifdef V4L2_PIX_FMT_SRGGB8
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index fe58cecaa2..2c37d4b3cb 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -1012,6 +1012,8 @@ check_size(AVCodecContext * const avctx, V4L2m2mContext * const s, const uint32_
+     }
+ }
+ 
++static int capture_has_10bit(V4L2m2mContext * const s);
++
+ static int
+ get_quirks(AVCodecContext * const avctx, V4L2m2mContext * const s)
+ {
+@@ -1042,8 +1044,11 @@ get_quirks(AVCodecContext * const avctx, V4L2m2mContext * const s)
+     // 10-bit stream gets NV12 at source change and then REQBUFS fails, i.e.
+     // only after decode has started. Refuse such streams at open instead.
+     // Nor can a session be restarted once drained (see v4l2_decode_flush).
+-    if (strcmp(cap.driver, "iris_driver") == 0)
+-        s->quirks |= FF_V4L2_QUIRK_8BIT_ONLY | FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN;
++    if (strcmp(cap.driver, "iris_driver") == 0) {
++        s->quirks |= FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN;
++        if (!capture_has_10bit(s))
++            s->quirks |= FF_V4L2_QUIRK_8BIT_ONLY;
++    }
+ 
+     av_log(avctx, AV_LOG_DEBUG, "Driver '%s': Quirks=%#x\n", cap.driver, s->quirks);
+     return 0;
+@@ -1152,6 +1157,23 @@ parse_extradata(AVCodecContext * const avctx, V4L2m2mContext * const s)
+     }
+ }
+ 
++// Newer iris firmware (HFI Gen2) offers P010; Gen1 offers only 8-bit formats.
++static int
++capture_has_10bit(V4L2m2mContext * const s)
++{
++    unsigned int n = 0;
++    uint32_t *fmts = ff_v4l2_context_enum_drm_formats(&s->capture, &n);
++    int found = 0;
++
++#ifdef V4L2_PIX_FMT_P010
++    for (unsigned int i = 0; i != n; ++i)
++        if (fmts[i] == V4L2_PIX_FMT_P010)
++            found = 1;
++#endif
++    av_free(fmts);
++    return found;
++}
++
+ static int
+ choose_capture_format(AVCodecContext * const avctx, V4L2m2mContext * const s)
+ {
+-- 
+2.53.0
+

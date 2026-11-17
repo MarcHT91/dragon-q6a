@@ -22,12 +22,25 @@ package is replaced, and plain `kodi` keeps using the system FFmpeg.
 
 ## Tested on
 
-- Radxa Dragon Q6A, Ubuntu 26.04.1 LTS (rafaelwms image), kernel `7.2.9-edge-qcs6490`
+- Radxa Dragon Q6A, Ubuntu 26.04.1 LTS (rafaelwms image)
+- Kernel `7.3.1-edge-qcs6490` (Armbian) with Radxa firmware `6.0.260916`: iris running the
+  **HFI Gen2** firmware (`vpu20_p1_gen2_s6.mbn`), 10-bit in hardware
+- Kernel `7.2.9-edge-qcs6490` with firmware `6.0.251230`: iris running the **Gen1** firmware
+  (`vpu20_p1.mbn`), 8-bit only
 - Kodi 21.3 (Ubuntu package), GBM windowing
 - Mesa 26.0.8 (freedreno, Adreno 643)
 
 Other kernels or Kodi versions may behave differently, especially iris, whose behaviour
 depends on the driver version.
+
+### Gen1 or Gen2
+
+Same hardware (VPU 2.0), different firmware and host protocol (HFI). Gen2 needs a kernel that
+supports it on SC7280 (7.3) and a DT that asks for it (`firmware-name`, `iris-iova`), which
+Radxa firmware 260916 provides (DT `v7.0`). With Gen2, iris offers `P010` capture and decodes
+HEVC Main10 and VP9 profile 2 up to 4K. Do not mix them: 7.2.9 with the `v7.0` DT loads the
+Gen2 firmware but speaks Gen1 (iris does not start), and 7.3.1 with firmware 251230 tries Gen2
+without the right DT (`firmware download failed -22`).
 
 ## Requirements
 
@@ -109,8 +122,9 @@ sudo modprobe -r qcom_iris && sudo modprobe qcom_iris
 | `0003` | iris has no capture format above 8 bits, so >8-bit streams are refused at open (`FF_V4L2_QUIRK_8BIT_ONLY`) instead of failing after decoding has started. |
 | `0004` | When the hardware decoder refuses a stream, Kodi's DRM PRIME path retries with the software decoder. That path only accepts 8-bit formats, so 10-bit HEVC gave a black screen. `hevcdec` now refuses >8-bit streams at open when `DRM_PRIME` is requested, and Kodi falls back to its normal software decoder. |
 | `0005` | After a drain (Kodi drains before every seek), iris never decodes again in the same session, and the stalled session could leave the driver unusable for every client. On iris, flush now closes and reopens the decoder (`FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN`). |
+| `0006` | With the Gen2 firmware, iris offers `P010` and picks it at source change for 10-bit streams. Adds `P010` ↔ `V4L2_PIX_FMT_P010` and `DRM_FORMAT_P010` for DRM PRIME, and only applies the `FF_V4L2_QUIRK_8BIT_ONLY` from `0003` when the capture queue has no `P010` (Gen1). |
 
-Patches `0001`–`0003` and `0005` only take effect when the driver is `iris_driver`. Patch
+Patches `0001`–`0003`, `0005` and `0006` only take effect when the driver is `iris_driver`. Patch
 `0004` only takes effect when the caller asks the software HEVC decoder for `DRM_PRIME`.
 
 ## Tests
@@ -118,8 +132,8 @@ Patches `0001`–`0003` and `0005` only take effect when the driver is `iris_dri
 | Script | What it does |
 |---|---|
 | `tests/abi-check.sh` | Checks that every FFmpeg symbol `kodi.bin` imports exists in `/opt/ffmpeg-iris`. |
-| `tests/gen-media.sh` | Generates the synthetic clips in `tests/media/`: H.264, HEVC and VP9 from 360p to 2160p, a mid-stream resolution change, and 10-bit HEVC. |
-| `tests/run-matrix.sh` | Frame-by-frame comparison (framemd5) of the software decoder against iris, with NV12 and DRM PRIME output (`tests/bin/drmframemd5`). 10-bit must be refused at open. Exits 0 when everything passes. |
+| `tests/gen-media.sh` | Generates the synthetic clips in `tests/media/`: H.264, HEVC and VP9 from 360p to 2160p, a mid-stream resolution change, and 10-bit HEVC and VP9. |
+| `tests/run-matrix.sh` | Frame-by-frame comparison (framemd5) of the software decoder against iris, with NV12 and DRM PRIME output (`tests/bin/drmframemd5`). If iris offers `P010` (Gen2), 10-bit is compared as P010; otherwise (Gen1) it must be refused at open. Exits 0 when everything passes. |
 | `tests/bin/seektest FILE DEC N` | Does N seeks the way Kodi does them (NULL-packet drain, `avcodec_flush_buffers`, seek) and measures the time to the first frame. |
 | `tests/bin/primefallback FILE 0\|1` | Checks that the software HEVC decoder refuses >8-bit streams when `DRM_PRIME` is preset. |
 | `tests/kodi-check.sh` | While Kodi is playing: libraries from `/opt`, `/dev/video0` open, V4L2 decoder in the log, CPU < 30 %. |
@@ -145,7 +159,7 @@ ffmpeg -ss 120 -t 60 -i INPUT.mkv -map 0:v:0 -map 0:a:0 -c:v libx265 -preset ult
 
 ## Results
 
-Kodi 21.3, Direct to plane, 1080p display:
+With the Gen1 firmware (kernel 7.2.9, firmware 251230), Kodi 21.3, Direct to plane, 1080p display:
 
 | Content | Decoder | Kodi CPU | Notes |
 |---|---|---|---|
@@ -159,6 +173,17 @@ Kodi 21.3, Direct to plane, 1080p display:
 `tests/run-matrix.sh`: 27/27 (H.264, HEVC and VP9 from 360p to 2160p, NV12 and DRM PRIME,
 resolution change, 10-bit refused at open).
 
+With the Gen2 firmware (kernel 7.3.1, firmware 260916), Kodi 21.3, EGL rendering, 2160p display:
+
+| Content | Decoder | Kodi CPU | Notes |
+|---|---|---|---|
+| HEVC 8-bit 1080p | iris | ~15–17 % | |
+| **HEVC 10-bit 2160p** | **iris (P010)** | **~11 %** | previously software, not smooth |
+| 10 seeks back and forth | iris | | resumes in ~0.55 s; with `seektest`, ~50 ms (1080p) and ~108 ms (2160p) |
+
+`tests/run-matrix.sh`: 30/30 (the 26 8-bit cases plus 10-bit HEVC and VP9 as P010, with NV12
+and DRM PRIME). 10-bit HEVC 2160p and 10-bit VP9 2160p are also bit-exact against software.
+
 ## Known limitations
 
 - **4K with Direct to plane.** The display controller's planes accept at most 2400 px of
@@ -167,10 +192,16 @@ resolution change, 10-bit refused at open).
 - **HDMI colour range and HDR.** The onboard RA620 DP-to-HDMI converter never tells the TV
   the RGB range, and does not forward HDR metadata. Kodi is set to limited range as a
   workaround; HDR10 is tone-mapped to SDR. Details: [HDMI colour range](docs/hdmi-colour-range.md).
-- **10-bit** is not decoded by iris (the driver offers no >8-bit capture format) and falls
-  back to software. 10-bit 4K in software is not smooth.
-- **10-bit VP9** probably gives a black screen. VP9 has no bit depth information at open,
-  and patch `0004` only covers HEVC.
+- **10-bit with Gen1** is not decoded by iris (the driver offers no >8-bit capture format)
+  and falls back to software. 10-bit 4K in software is not smooth. With Gen2 it is decoded in
+  hardware (see [Gen1 or Gen2](#gen1-or-gen2)).
+- **10-bit VP9 with Gen1** probably gives a black screen. VP9 has no bit depth information at
+  open, and patch `0004` only covers HEVC.
+- **Seeking with Gen2.** Now and then a seek made right after opening a video stalls for
+  ~10 s, with `OutputPicture - timeout waiting for buffer` in Kodi's log. It can also happen
+  when a video restarts in repeat mode. The cause is not known yet; `seektest` (no rendering)
+  does not reproduce it.
+- **AV1**: VPU 2.0 has no AV1 decoder.
 - **8K**: iris refuses it ("current session not supported"). Software decoding manages
   ~32 fps.
 - JSON-RPC `Player.Open` answers `Invalid params` for new files in a directory Kodi has

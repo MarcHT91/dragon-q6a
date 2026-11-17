@@ -1,8 +1,8 @@
 #!/bin/bash
-# bitexact.sh FILE SWDEC HWDEC MODE   (MODE: nv12 | drm)
+# bitexact.sh FILE SWDEC HWDEC MODE [PIXFMT]   (MODE: nv12 | drm; PIXFMT: nv12 (defecte) | p010le)
 export LC_ALL=C
 set -uo pipefail
-F=$1; SW=$2; HW=$3; MODE=$4
+F=$1; SW=$2; HW=$3; MODE=$4; PF=${5:-nv12}
 FF=${PREFIX:-/opt/ffmpeg-iris}/bin/ffmpeg
 L=$(dirname "$0")/logs; mkdir -p "$L"
 tag=$(basename "$F" .mkv)_$MODE
@@ -20,11 +20,11 @@ fi
 md5s() { grep -v '^#' | awk -F', *' '{print $NF}'; }
 # -noautoscale: compara cada fotograma a la seva resolució real (sense reescalar
 # al primer tamany després d'un canvi de resolució).
-ref=$(timeout 120 $FF -v error -c:v "$SW" -i "$F" -an -noautoscale -vf format=nv12 -f framemd5 - | md5s)
+ref=$(timeout 120 $FF -v error -c:v "$SW" -i "$F" -an -noautoscale -vf format=$PF -f framemd5 - | md5s)
 if [ "$MODE" = drm ]; then
   hw=$(AV_LOG_FORCE_NOCOLOR=1 timeout 120 "$PROBE" "$F" "$HW" 2>"$L/$tag.log")
 else
-  hw=$(timeout 120 $FF -v debug -c:v "$HW" -i "$F" -an -noautoscale -vf format=nv12 -f framemd5 - 2>"$L/$tag.log" | md5s)
+  hw=$(timeout 120 $FF -v debug -c:v "$HW" -i "$F" -an -noautoscale -vf format=$PF -f framemd5 - 2>"$L/$tag.log" | md5s)
 fi
 nr=$(echo "$ref" | grep -c .); nh=$(echo "$hw" | grep -c .)
 if [ "$nh" -eq 0 ]; then echo "FAIL $tag: 0 fotogrames (log: $L/$tag.log)"; exit 1; fi

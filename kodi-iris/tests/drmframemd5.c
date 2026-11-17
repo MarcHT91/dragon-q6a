@@ -59,7 +59,8 @@ static int output(const AVFrame *f)
     sw = av_frame_alloc();
     if (!sw)
         return AVERROR(ENOMEM);
-    sw->format = AV_PIX_FMT_NV12;
+    /* 10-bit frames (iris Gen2: P010) are compared as P010, the rest as NV12 */
+    sw->format = h->sw_format == AV_PIX_FMT_P010 ? AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
     ret = av_hwframe_transfer_data(sw, f, 0);
     if (ret < 0) {
         fprintf(stderr, "drmframemd5: transfer fotograma %d: %s\n", nframe, av_err2str(ret));

@@ -24,12 +24,26 @@ continua fent servir l'FFmpeg del sistema.
 
 ## Provat a
 
-- Radxa Dragon Q6A, Ubuntu 26.04.1 LTS (imatge de rafaelwms), kernel `7.2.9-edge-qcs6490`
+- Radxa Dragon Q6A, Ubuntu 26.04.1 LTS (imatge de rafaelwms)
+- Kernel `7.3.1-edge-qcs6490` (Armbian) amb el firmware de Radxa `6.0.260916`: iris amb
+  firmware **HFI gen2** (`vpu20_p1_gen2_s6.mbn`), amb 10 bits per maquinari
+- Kernel `7.2.9-edge-qcs6490` amb el firmware `6.0.251230`: iris amb firmware **gen1**
+  (`vpu20_p1.mbn`), només 8 bits
 - Kodi 21.3 (paquet d'Ubuntu), sistema de finestres GBM
 - Mesa 26.0.8 (freedreno, Adreno 643)
 
 Altres kernels o versions de Kodi poden comportar-se diferent, sobretot iris, que depèn de
 la versió del controlador.
+
+### Gen1 o gen2
+
+És el mateix maquinari (VPU 2.0), però amb un altre firmware i un altre protocol (HFI). El
+gen2 necessita un kernel que el sàpiga fer servir a la SC7280 (7.3) i un DT que el demani
+(`firmware-name`, `iris-iova`), que porta el firmware de Radxa 260916 (DT `v7.0`). Amb el
+gen2, iris ofereix `P010` a la captura i descodifica HEVC Main10 i VP9 perfil 2 fins a 4K.
+No barregis: el 7.2.9 amb el DT `v7.0` carrega el firmware gen2 però parla gen1 (iris no
+arrenca), i el 7.3.1 amb el firmware 251230 prova el gen2 sense el DT adequat
+(`firmware download failed -22`).
 
 ## Requisits
 
@@ -114,8 +128,9 @@ sudo modprobe -r qcom_iris && sudo modprobe qcom_iris
 | `0003` | iris no té cap format de captura de més de 8 bits, així que els fluxos de més de 8 bits es refusen en obrir (`FF_V4L2_QUIRK_8BIT_ONLY`) en lloc de fallar quan la descodificació ja ha començat. |
 | `0004` | Quan el descodificador per maquinari refusa un flux, el camí DRM PRIME de Kodi torna a provar amb el descodificador per programari. Aquest camí només admet formats de 8 bits, i l'HEVC de 10 bits donava pantalla negra. Ara `hevcdec` refusa els fluxos de més de 8 bits en obrir si se li demana `DRM_PRIME`, i Kodi passa al seu descodificador per programari normal. |
 | `0005` | Després d'un buidatge (Kodi en fa un abans de cada salt), iris no torna a descodificar mai amb la mateixa sessió, i la sessió encallada podia deixar el controlador inservible per a tothom. A iris, el flush ara tanca el descodificador i n'obre un de nou (`FF_V4L2_QUIRK_REOPEN_AFTER_DRAIN`). |
+| `0006` | Amb el firmware gen2, iris ofereix `P010` i el tria en el canvi de format per als fluxos de 10 bits. S'afegeix `P010` ↔ `V4L2_PIX_FMT_P010` i `DRM_FORMAT_P010` per a DRM PRIME, i el `FF_V4L2_QUIRK_8BIT_ONLY` del `0003` només s'aplica si la captura no ofereix `P010` (gen1). |
 
-Els pegats `0001`–`0003` i `0005` només tenen efecte quan el controlador és
+Els pegats `0001`–`0003`, `0005` i `0006` només tenen efecte quan el controlador és
 `iris_driver`. El `0004` només té efecte quan qui crida demana `DRM_PRIME` al
 descodificador HEVC per programari.
 
@@ -124,8 +139,8 @@ descodificador HEVC per programari.
 | Script | Què fa |
 |---|---|
 | `tests/abi-check.sh` | Comprova que tots els símbols d'FFmpeg que importa `kodi.bin` existeixen a `/opt/ffmpeg-iris`. |
-| `tests/gen-media.sh` | Genera els vídeos sintètics de `tests/media/`: H.264, HEVC i VP9 de 360p a 2160p, un canvi de resolució a mig flux i HEVC de 10 bits. |
-| `tests/run-matrix.sh` | Compara fotograma a fotograma (framemd5) el descodificador per programari amb iris, amb sortida NV12 i DRM PRIME (`tests/bin/drmframemd5`). El 10 bits s'ha de refusar en obrir. Surt amb 0 si tot passa. |
+| `tests/gen-media.sh` | Genera els vídeos sintètics de `tests/media/`: H.264, HEVC i VP9 de 360p a 2160p, un canvi de resolució a mig flux, i HEVC i VP9 de 10 bits. |
+| `tests/run-matrix.sh` | Compara fotograma a fotograma (framemd5) el descodificador per programari amb iris, amb sortida NV12 i DRM PRIME (`tests/bin/drmframemd5`). Si iris ofereix `P010` (gen2), el 10 bits es compara en P010; si no (gen1), s'ha de refusar en obrir. Surt amb 0 si tot passa. |
 | `tests/bin/seektest FITXER DEC N` | Fa N salts tal com els fa Kodi (buidatge amb un paquet NULL, `avcodec_flush_buffers`, salt) i mesura el temps fins al primer fotograma. |
 | `tests/bin/primefallback FITXER 0\|1` | Comprova que el descodificador HEVC per programari refusa els fluxos de més de 8 bits quan se li demana `DRM_PRIME`. |
 | `tests/kodi-check.sh` | Amb Kodi reproduint: biblioteques de `/opt`, `/dev/video0` obert, descodificador V4L2 al registre i CPU < 30 %. |
@@ -151,7 +166,7 @@ ffmpeg -ss 120 -t 60 -i ENTRADA.mkv -map 0:v:0 -map 0:a:0 -c:v libx265 -preset u
 
 ## Resultats
 
-Kodi 21.3, Direct to plane, pantalla de 1080p:
+Amb el firmware gen1 (kernel 7.2.9, firmware 251230), Kodi 21.3, Direct to plane, pantalla de 1080p:
 
 | Contingut | Descodificador | CPU de Kodi | Notes |
 |---|---|---|---|
@@ -165,6 +180,19 @@ Kodi 21.3, Direct to plane, pantalla de 1080p:
 `tests/run-matrix.sh`: 27/27 (H.264, HEVC i VP9 de 360p a 2160p, NV12 i DRM PRIME, canvi de
 resolució i refús del 10 bits en obrir).
 
+Amb el firmware gen2 (kernel 7.3.1, firmware 260916), Kodi 21.3 amb renderitzat EGL i
+pantalla 2160p:
+
+| Contingut | Descodificador | CPU de Kodi | Notes |
+|---|---|---|---|
+| HEVC 8 bits 1080p | iris | ~15–17 % | |
+| **HEVC 10 bits 2160p** | **iris (P010)** | **~11 %** | abans, per programari i no fluid |
+| 10 salts endavant i enrere | iris | | represa en ~0,55 s; amb `seektest`, ~50 ms (1080p) i ~108 ms (2160p) |
+
+`tests/run-matrix.sh`: 30/30 (els 26 casos de 8 bits, més HEVC i VP9 de 10 bits en P010, amb
+NV12 i DRM PRIME). HEVC 10 bits 2160p i VP9 10 bits 2160p també són idèntics bit a bit al
+programari.
+
 ## Limitacions conegudes
 
 - **4K amb Direct to plane.** Els plans del controlador de pantalla accepten com a màxim
@@ -174,10 +202,16 @@ resolució i refús del 10 bits en obrir).
 - **Rang de color HDMI i HDR.** El convertidor DP→HDMI RA620 de la placa no indica mai al
   televisor el rang RGB, i no reenvia les metadades HDR. Com a solució, el Kodi es configura
   en rang limitat; l'HDR10 es converteix a SDR. Detalls: [Rang de color HDMI](docs/hdmi-colour-range.ca.md).
-- **El 10 bits** no el descodifica iris (el controlador no ofereix cap format de captura de
-  més de 8 bits) i passa a programari. El 10 bits 4K per programari no és fluid.
-- **El VP9 de 10 bits** probablement dona pantalla negra. El VP9 no porta informació de bits
-  en obrir, i el pegat `0004` només cobreix HEVC.
+- **El 10 bits amb gen1** no el descodifica iris (el controlador no ofereix cap format de
+  captura de més de 8 bits) i passa a programari. El 10 bits 4K per programari no és fluid.
+  Amb gen2 es descodifica per maquinari (vegeu [Gen1 o gen2](#gen1-o-gen2)).
+- **El VP9 de 10 bits amb gen1** probablement dona pantalla negra. El VP9 no porta informació
+  de bits en obrir, i el pegat `0004` només cobreix HEVC.
+- **Salts amb gen2.** De tant en tant, un salt fet just després d'obrir el vídeo queda aturat
+  ~10 s, amb `OutputPicture - timeout waiting for buffer` al registre de Kodi. També pot passar
+  quan el vídeo torna a començar en mode repetició. La causa encara no se sap; `seektest`
+  (sense renderitzar) no ho reprodueix.
+- **AV1**: la VPU 2.0 no en té.
 - **8K**: iris el refusa ("current session not supported"). Per programari arriba a ~32 fps.
 - `Player.Open` per JSON-RPC respon `Invalid params` amb fitxers nous dins d'una carpeta que
   Kodi ja ha llistat (memòria cau de directoris). Cal fer servir una carpeta nova.
